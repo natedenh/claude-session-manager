@@ -11,7 +11,9 @@ import time
 from datetime import datetime
 
 from rich.console import Group
+from rich.markdown import Markdown
 from rich.rule import Rule
+from rich.table import Table
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -22,7 +24,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, ghostty, tmux
+from . import data, desktop, ghostty, tmux
 from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
@@ -46,7 +48,7 @@ HELP = """\
 [b]Act[/b]
   enter        open the session: beside this list when running in tmux, otherwise
                here (you come back to this list when claude exits). A session
-               already open in a Ghostty tab gets focused instead.
+               already open in a Ghostty tab or Claude desktop is shown there instead.
   ctrl+\\       (tmux) switch between this list and the session
   c            (tmux) close the session's claude process
   o / O        resume in a new Ghostty tab / window
@@ -400,23 +402,27 @@ class CSM(App[Session | None]):
     def show_messages(self, s: Session, messages: list[Message]) -> None:
         if (cur := self.selected()) is None or cur.id != s.id:
             return
+        # Markdown normally; plain text while a transcript search is active, so matches can be highlighted.
+        searching = bool(self.search_query and self.hits is not None)
         parts = []
         for m in messages:
             text = m.text if len(m.text) <= MAX_MESSAGE_CHARS else m.text[:MAX_MESSAGE_CHARS] + " …"
-            if m.role == "user":
-                parts.append(Text.assemble(("❯ ", "bold cyan"), (text, "bold")))
-            elif m.role == "tools":
+            if m.role == "tools":
                 n = int(m.text)
                 parts.append(Text(f"  ran {n} tool call{'s' if n != 1 else ''}", style="dim"))
             else:
-                parts.append(Text.assemble(("● ", "dim"), text))
+                user = m.role == "user"
+                if searching:
+                    body = Text(text, style="bold" if user else "")
+                    body.highlight_words([self.search_query], "reverse", case_sensitive=False)
+                else:
+                    body = Markdown(text, style="bold" if user else "none")
+                row = Table.grid(expand=True)
+                row.add_column(width=2)
+                row.add_column(ratio=1)
+                row.add_row(Text("❯", style="bold cyan") if user else Text("●", style="dim"), body)
+                parts.append(row)
             parts.append(Text(""))
-        if self.query_text.strip():
-            for p in parts:
-                p.highlight_words(self.query_text.split(), "underline", case_sensitive=False)
-        if self.search_query and self.hits is not None:
-            for p in parts:
-                p.highlight_words([self.search_query], "reverse", case_sensitive=False)
         self.query_one("#messages", Static).update(Group(*parts) if parts else Text("(no messages)", style="dim"))
         self.query_one("#transcript", VerticalScroll).scroll_end(animate=False)
 
@@ -526,6 +532,13 @@ class CSM(App[Session | None]):
                     self.call_from_thread(self.notify, f"Switched to “{term.title}”", timeout=2)
                     return
             except RuntimeError:
+                pass
+        if live and desktop.can_open(live):
+            try:
+                desktop.open_session(live)
+                self.call_from_thread(self.notify, "Opened in Claude desktop", timeout=2)
+                return
+            except (OSError, subprocess.CalledProcessError):
                 pass
         if live:
             msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"

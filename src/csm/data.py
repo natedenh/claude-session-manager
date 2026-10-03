@@ -70,6 +70,7 @@ class LiveSession:
     entrypoint: str
     name: str | None = None
     cwd: str | None = None
+    host_session_id: str | None = None  # the desktop app's own id for the session
 
 
 @dataclass
@@ -220,6 +221,7 @@ def load_live(paths: Paths) -> dict[str, LiveSession]:
             live[d["sessionId"]] = LiveSession(
                 pid=pid, session_id=d["sessionId"], status=d.get("status") or "running",
                 entrypoint=d.get("entrypoint") or d.get("kind") or "", name=d.get("name"), cwd=d.get("cwd"),
+                host_session_id=d.get("hostSessionId"),
             )
     return live
 
