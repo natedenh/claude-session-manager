@@ -15,7 +15,7 @@ csm
 
 Or run it without installing: `uv run csm`. For the side-by-side mode, `brew install tmux`.
 
-`csm --archived` starts with archived sessions shown. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
+`csm --archived` starts with archived sessions shown. Colors come from the terminal, and its background shows through. The default theme is `ansi-light` or `ansi-dark`, following macOS appearance. Override it with `--theme <name>` or `CSM_THEME`; any Textual theme name works, e.g. `textual-dark` for csm's own colors. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
 
 ### How the tmux mode works
 

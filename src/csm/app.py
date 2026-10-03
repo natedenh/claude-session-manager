@@ -15,6 +15,7 @@ from rich.markdown import Markdown
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+from rich.theme import Theme as RichTheme
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -31,6 +32,15 @@ PER_PROJECT = 5
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live"}
 MAX_MESSAGE_CHARS = 2500
+THEMES = ("ansi-light", "ansi-dark")  # Textual's themes that use the terminal's own colors
+
+
+def default_theme() -> str:
+    """Match the terminal: its background shows through, so pick light or dark from macOS."""
+    if theme := os.environ.get("CSM_THEME"):
+        return theme
+    r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
+    return "ansi-dark" if r.stdout.strip() == "Dark" else "ansi-light"
 
 HELP = """\
 [b]Navigate[/b]
@@ -141,9 +151,11 @@ class CSM(App[Session | None]):
     #body { height: 1fr; }
     #list { width: 38%; min-width: 34; max-width: 72; border: none; padding: 0; }
     #list > .option-list--option { text-wrap: nowrap; text-overflow: ellipsis; }
-    #right { border-left: solid $panel-lighten-2; padding: 0 1 0 2; }
+    #right { border-left: solid $foreground 30%; padding: 0 1 0 2; }
     #meta { height: auto; }
     #transcript { height: 1fr; }
+    * { scrollbar-background: $background; scrollbar-background-hover: $background;
+        scrollbar-background-active: $background; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
     Prompt, Confirm, Help { align: center middle; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
@@ -176,8 +188,9 @@ class CSM(App[Session | None]):
     ]
 
     def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None,
-                 host: tmux.Tmux | None = None, show_archived: bool = False):
+                 host: tmux.Tmux | None = None, show_archived: bool = False, theme: str | None = None):
         super().__init__()
+        self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
         self.host = host  # set when running as the sidebar of a tmux window
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
@@ -208,6 +221,9 @@ class CSM(App[Session | None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.theme = self.theme_name
+        # Rich styles `inline code` "on black"; keep the terminal's background instead.
+        self.console.push_theme(RichTheme({"markdown.code": "bold cyan"}))
         self.query_one("#search", Input).border_title = "filter"
         self.query_one(SessionList).focus()
         if self.host:
@@ -429,7 +445,9 @@ class CSM(App[Session | None]):
                     body = Text(text, style="bold" if user else "")
                     body.highlight_words([self.search_query], "reverse", case_sensitive=False)
                 else:
-                    body = Markdown(text, style="bold" if user else "none")
+                    # ANSI code themes have no background, so code blocks sit on the terminal's.
+                    code_theme = "ansi_dark" if self.current_theme.dark else "ansi_light"
+                    body = Markdown(text, style="bold" if user else "none", code_theme=code_theme)
                 row = Table.grid(expand=True)
                 row.add_column(width=2)
                 row.add_column(ratio=1)
@@ -674,19 +692,22 @@ def main() -> None:
                     help="don't use tmux; resume sessions in this terminal and return to the list after")
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
     ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
+    ap.add_argument("--theme", help="Textual theme; default ansi-light or ansi-dark (follows macOS), "
+                                    "which use the terminal's own colors and background. Also CSM_THEME.")
     ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
         host = tmux.Tmux(own=args.sidebar)
         host.mark_sidebar()
-        CSM(host=host, show_archived=args.archived).run()
+        CSM(host=host, show_archived=args.archived, theme=args.theme).run()
         return
     if not args.no_tmux and tmux.available():
-        tmux.launch(["--archived"] if args.archived else [])  # does not return
+        extra = (["--archived"] if args.archived else []) + (["--theme", args.theme] if args.theme else [])
+        tmux.launch(extra)  # does not return
     focus = None
     claude = shutil.which("claude") or "claude"
     while True:
-        s = CSM(focus_id=focus, show_archived=args.archived).run()
+        s = CSM(focus_id=focus, show_archived=args.archived, theme=args.theme).run()
         if s is None:
             return
         print(f"\n\033[2mresuming\033[0m {s.title}  \033[2m({tilde(s.cwd)})\033[0m\n", flush=True)

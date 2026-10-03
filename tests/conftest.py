@@ -48,3 +48,9 @@ def no_real_ghostty(monkeypatch):
     """Never script the user's actual Ghostty from tests."""
     from csm import ghostty
     monkeypatch.setattr(ghostty, "running", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def fixed_theme(monkeypatch):
+    """Skip the macOS appearance lookup (tests stub out subprocess.run)."""
+    monkeypatch.setenv("CSM_THEME", "ansi-dark")
