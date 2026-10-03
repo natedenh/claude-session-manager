@@ -2,7 +2,9 @@
 
 `csm` is a terminal UI for Claude Code sessions: the desktop app's sidebar, plus search, filters, and resume.
 
-It lists every session in `~/.claude/projects`, grouped by project with the most recent activity first. A preview pane shows the session's details and its last few turns. Press enter to resume a session with `claude -r` in the right directory. When claude exits you're back in the list, on the same session.
+It lists every session in `~/.claude/projects`, grouped by project with the most recent activity first. A preview pane shows the session's details and its last few turns.
+
+When tmux is installed, `csm` works like the desktop app's window: the list is a sidebar on the left and the session you open runs on the right. Opening another session swaps it in. The previous one keeps running out of sight, and switching back to it is instant. `ctrl+\` moves focus between the sidebar and the session, and clicking either side works too. A session that's already open in another Ghostty tab gets focused there instead of being resumed twice.
 
 ## Install
 
@@ -11,14 +13,26 @@ uv tool install --editable .
 csm
 ```
 
-Or run it without installing: `uv run csm`. Use `csm --once` to exit after resuming instead of returning to the list.
+Or run it without installing: `uv run csm`. For the side-by-side mode, `brew install tmux`.
+
+`csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
+
+### How the tmux mode works
+
+`csm` starts or reattaches to a private tmux server (`tmux -L csm`) that uses this package's `src/csm/tmux.conf`. Your own tmux config and sessions are untouched. That config sets no prefix key, because Claude Code uses `ctrl+b`. It turns on the mouse and hides the status bar.
+
+`q` detaches. Your sessions keep running, and closing the Ghostty window does the same thing. Running `csm` again brings everything back. To stop a session's claude process, press `c` on it in the list, or exit claude as usual. `tmux -L csm kill-server` stops everything.
+
+Inside your own tmux, `csm` uses the current window instead, and `q` quits rather than detaching your client.
 
 ## Keys
 
 | Key | Action |
 | --- | --- |
 | `↑↓` / `j k`, `[ ]` | move; jump to the previous/next project |
-| `enter` | resume the session, or collapse/expand a project header |
+| `enter` | open the session (beside the list in tmux, else in this terminal), or collapse/expand a project header |
+| `ctrl+\` | (tmux) switch focus between the list and the session |
+| `c` | (tmux) stop the session's claude process |
 | `/` | filter by title, project or branch as you type |
 | `s` | search transcript text (runs on enter) |
 | `esc` | clear the filter and search |
@@ -32,7 +46,7 @@ Or run it without installing: `uv run csm`. Use `csm --once` to exit after resum
 | `d` | move the transcript to `~/.Trash` |
 | `?` | help |
 
-Icons: green `⇄` PR linked, magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. If you resume a session that's already running, csm asks first.
+Icons: green `⇄` PR linked, magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else focuses its Ghostty tab if csm can find one, matched by tab title and directory. Otherwise csm asks before resuming it a second time.
 
 ## Data
 

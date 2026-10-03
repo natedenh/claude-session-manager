@@ -22,30 +22,13 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data
+from . import data, ghostty, tmux
 from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "archived": "archived"}
 MAX_MESSAGE_CHARS = 2500
-
-# argv: working directory, command line, "tab" or "window"
-GHOSTTY_OPEN = """
-on run argv
-  tell application id "com.mitchellh.ghostty"
-    set cfg to new surface configuration
-    set initial working directory of cfg to item 1 of argv
-    set command of cfg to item 2 of argv
-    if item 3 of argv is "tab" and (count of windows) > 0 then
-      new tab in front window with configuration cfg
-    else
-      new window with configuration cfg
-    end if
-    activate
-  end tell
-end run
-"""
 
 HELP = """\
 [b]Navigate[/b]
@@ -61,15 +44,19 @@ HELP = """\
   a            show archived sessions instead
 
 [b]Act[/b]
-  enter        resume here (you come back to this list when claude exits)
+  enter        open the session: beside this list when running in tmux, otherwise
+               here (you come back to this list when claude exits). A session
+               already open in a Ghostty tab gets focused instead.
+  ctrl+\\       (tmux) switch between this list and the session
+  c            (tmux) close the session's claude process
   o / O        resume in a new Ghostty tab / window
   r            rename                   x        archive / unarchive
   y            copy session id          d        move transcript to the Trash
-  ctrl+r       reload                   q        quit
+  ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
 
 [b]Icons[/b]
   [green]⇄[/] PR linked   [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [yellow]●[/] live, busy
+  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
 """
 
 
@@ -145,6 +132,8 @@ class Help(ModalScreen[None]):
 
 class CSM(App[Session | None]):
     TITLE = "Claude sessions"
+    # Beside a session in tmux the list is all that fits; full width gets the preview back.
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
     CSS = """
     #search { margin: 0 1; border-title-color: $accent; }
     #body { height: 1fr; }
@@ -158,10 +147,13 @@ class CSM(App[Session | None]):
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
     .dialog Input { margin-top: 1; }
     Help .dialog { width: 84; }
+    Screen.-narrow #right { display: none; }
+    Screen.-narrow #list { width: 1fr; max-width: 100%; }
     """
     BINDINGS = [
         Binding("slash", "filter", "Filter"),
         Binding("s", "search", "Search text"),
+        Binding("c", "close_session", "Close", show=False),
         Binding("o", "open('tab')", "New tab"),
         Binding("O", "open('window')", "New window", show=False),
         Binding("r", "rename", "Rename"),
@@ -181,8 +173,12 @@ class CSM(App[Session | None]):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None):
+    def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None,
+                 host: tmux.Tmux | None = None):
         super().__init__()
+        self.host = host  # set when running as the sidebar of a tmux window
+        self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
+        self.shown_id: str | None = None
         self.paths = paths or data.Paths()
         self.focus_id = focus_id
         self.state = data.State(self.paths.state)
@@ -211,6 +207,8 @@ class CSM(App[Session | None]):
     def on_mount(self) -> None:
         self.query_one("#search", Input).border_title = "filter"
         self.query_one(SessionList).focus()
+        if self.host:
+            self.poll_host()
         self.load()
         self.set_interval(2, self.poll_live)
         self.set_interval(20, self.load)
@@ -232,9 +230,21 @@ class CSM(App[Session | None]):
 
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
-        if {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}:
+        changed = self.host is not None and self.poll_host()
+        if changed or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}:
             self.live = live
             self.rebuild()
+
+    def poll_host(self) -> bool:
+        """Refresh which sessions run on our tmux server. Returns True if anything changed."""
+        try:
+            hosted, shown = self.host.hosted(), self.host.shown()
+        except (subprocess.CalledProcessError, OSError):
+            return False
+        changed = (hosted, shown) != (self.hosted, self.shown_id)
+        self.hosted, self.shown_id = hosted, shown
+        return changed
+
 
     # ---- list ------------------------------------------------------------
 
@@ -264,7 +274,8 @@ class CSM(App[Session | None]):
 
     def row(self, s: Session) -> Text:
         live = self.live.get(s.id)
-        dot = ("● ", STATUS_STYLE.get(live.status, "cyan")) if live else ("  ", "")
+        style = STATUS_STYLE.get(live.status, "cyan") if live else ""
+        dot = ("▶ " if s.id == self.shown_id else "● " if live else "  ", style)
         icon = ("⇄ ", "green") if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         return Text.assemble(dot, icon, s.title)
 
@@ -500,12 +511,63 @@ class CSM(App[Session | None]):
     # ---- actions on a session --------------------------------------------
 
     def resume(self, s: Session) -> None:
-        if live := self.live.get(s.id):
+        self.resume_flow(s)
+
+    @work(thread=True, exclusive=True, group="resume")
+    def resume_flow(self, s: Session) -> None:
+        if s.id in self.hosted:
+            self.call_from_thread(self.start, s)
+            return
+        live = self.live.get(s.id)
+        if live and ghostty.running():
+            try:
+                term = ghostty.find(s, live, ghostty.terminals())
+                if term and ghostty.focus(term.id):
+                    self.call_from_thread(self.notify, f"Switched to “{term.title}”", timeout=2)
+                    return
+            except RuntimeError:
+                pass
+        if live:
             msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
                    "Resuming it a second time means two processes writing one transcript. Resume anyway?")
-            self.push_screen(Confirm(msg), lambda yes: yes and self.exit(s))
+            self.call_from_thread(self.push_screen, Confirm(msg), lambda yes: yes and self.start(s))
         else:
+            self.call_from_thread(self.start, s)
+
+    def start(self, s: Session) -> None:
+        if not self.host:
             self.exit(s)
+            return
+        try:
+            self.host.show(s.id, s.cwd, claude_command(s), s.title[:40])
+        except subprocess.CalledProcessError as e:
+            self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
+        self.poll_host()
+        self.rebuild()
+
+    def action_close_session(self) -> None:
+        if not (s := self.selected()):
+            return
+        if not self.host or s.id not in self.hosted:
+            self.notify("Only sessions opened here can be closed here", severity="warning")
+            return
+
+        def done(yes: bool) -> None:
+            if yes:
+                self.host.close(s.id)
+                self.poll_host()
+                self.rebuild()
+        live = self.live.get(s.id)
+        if live and live.status != "idle":
+            self.push_screen(Confirm(f"“{s.title}” is {live.status}. Stop it?"), done)
+        else:
+            done(True)
+
+    async def action_quit(self) -> None:
+        if self.host and self.host.own:
+            self.host.detach()  # sessions keep running; `csm` reattaches
+        else:
+            self.exit()
 
     def action_open(self, where: str) -> None:
         if not (s := self.selected()):
@@ -521,11 +583,10 @@ class CSM(App[Session | None]):
     def open_in_ghostty(self, s: Session, where: str) -> None:
         # AppleScript drives the running Ghostty. `open -na Ghostty.app` would start a
         # second instance, which restores every saved tab alongside the new one.
-        command = shlex.join([shutil.which("claude") or "claude", "-r", s.id])
-        result = subprocess.run(["osascript", "-", s.cwd, command, where],
-                                input=GHOSTTY_OPEN, capture_output=True, text=True)
-        if result.returncode:
-            self.call_from_thread(self.notify, f"Ghostty: {result.stderr.strip() or 'failed'}", severity="error")
+        try:
+            ghostty.open_session(s.cwd, claude_command(s), where)
+        except RuntimeError as e:
+            self.call_from_thread(self.notify, f"Ghostty: {e}", severity="error")
         else:
             self.call_from_thread(self.notify, f"Opened “{s.title}” in a new {where}", timeout=2)
 
@@ -574,10 +635,24 @@ class CSM(App[Session | None]):
         self.push_screen(Confirm(f"Move “{s.title}” to the Trash?"), done)
 
 
+def claude_command(s: Session) -> str:
+    return shlex.join([shutil.which("claude") or "claude", "-r", s.id])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="csm", description=__doc__)
-    ap.add_argument("--once", action="store_true", help="exit after resuming instead of returning to the list")
+    ap.add_argument("--no-tmux", action="store_true",
+                    help="don't use tmux; resume sessions in this terminal and return to the list after")
+    ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
+    ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
+        host = tmux.Tmux(own=args.sidebar)
+        host.mark_sidebar()
+        CSM(host=host).run()
+        return
+    if not args.no_tmux and tmux.available():
+        tmux.launch([])  # does not return
     focus = None
     claude = shutil.which("claude") or "claude"
     while True:

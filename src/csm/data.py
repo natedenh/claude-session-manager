@@ -69,6 +69,7 @@ class LiveSession:
     status: str
     entrypoint: str
     name: str | None = None
+    cwd: str | None = None
 
 
 @dataclass
@@ -218,7 +219,7 @@ def load_live(paths: Paths) -> dict[str, LiveSession]:
         if d.get("sessionId") and _alive(pid):
             live[d["sessionId"]] = LiveSession(
                 pid=pid, session_id=d["sessionId"], status=d.get("status") or "running",
-                entrypoint=d.get("entrypoint") or d.get("kind") or "", name=d.get("name"),
+                entrypoint=d.get("entrypoint") or d.get("kind") or "", name=d.get("name"), cwd=d.get("cwd"),
             )
     return live
 

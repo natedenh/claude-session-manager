@@ -41,3 +41,10 @@ def write(paths):
         f.write_text("".join(line + "\n" for line in lines))
         return f
     return _write
+
+
+@pytest.fixture(autouse=True)
+def no_real_ghostty(monkeypatch):
+    """Never script the user's actual Ghostty from tests."""
+    from csm import ghostty
+    monkeypatch.setattr(ghostty, "running", lambda: False)

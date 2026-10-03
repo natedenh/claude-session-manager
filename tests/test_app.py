@@ -123,3 +123,71 @@ async def test_open_in_ghostty_scripts_running_app(sessions, monkeypatch):
     [(argv, kw)] = calls
     assert argv[:2] == ["osascript", "-"] and argv[3:] == ["/bin/claude -r b1", "tab"]
     assert argv[2].endswith("/beta") and "new tab in front window" in kw["input"]
+
+
+async def test_live_session_in_ghostty_tab_is_focused(sessions, monkeypatch, tmp_path):
+    from csm import ghostty
+    (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
+    focused = []
+    monkeypatch.setattr(ghostty, "running", lambda: True)
+    monkeypatch.setattr(ghostty, "terminals", lambda: [ghostty.Terminal("T1", str(tmp_path / "beta"), "◐ Beta setup")])
+    monkeypatch.setattr(ghostty, "focus", lambda tid: focused.append(tid) or True)
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert focused == ["T1"] and len(app.screen_stack) == 1  # no confirm dialog
+    assert app.return_value is None
+
+
+class FakeHost:
+    def __init__(self):
+        self.calls, self.panes, self.visible, self.own = [], {}, None, True
+
+    def hosted(self):
+        return dict(self.panes)
+
+    def shown(self):
+        return self.visible
+
+    def show(self, sid, cwd, command, name=""):
+        self.calls.append(("show", sid, command))
+        self.panes.setdefault(sid, f"%{len(self.panes) + 1}")
+        self.visible = sid
+
+    def close(self, sid):
+        self.calls.append(("close", sid))
+        self.panes.pop(sid, None)
+        self.visible = None if self.visible == sid else self.visible
+
+    def detach(self):
+        self.calls.append(("detach",))
+
+
+async def test_host_mode_shows_beside_list_and_detaches(sessions):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert host.calls[0][:2] == ("show", "b1") and host.calls[0][2].endswith("-r b1")
+        assert app.shown_id == "b1" and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("▶")
+        await pilot.press("c")
+        await settle(pilot)
+        assert ("close", "b1") in host.calls and app.shown_id is None
+        await pilot.press("q")
+        assert host.calls[-1] == ("detach",)
+        assert app.is_running  # sessions keep running; csm stays up for the next attach
+
+
+async def test_narrow_hides_preview(sessions):
+    app = CSM(sessions)
+    async with app.run_test(size=(60, 30)) as pilot:
+        await settle(pilot)
+        assert not app.query_one("#right").display
+    app = CSM(sessions)
+    async with app.run_test(size=(140, 30)) as pilot:
+        await settle(pilot)
+        assert app.query_one("#right").display
