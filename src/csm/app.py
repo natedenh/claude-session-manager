@@ -29,7 +29,7 @@ from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
-FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "archived": "archived"}
+FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live"}
 MAX_MESSAGE_CHARS = 2500
 
 HELP = """\
@@ -43,7 +43,7 @@ HELP = """\
   s            search transcript text (press enter to run)
   esc          clear the filter and search
   p  w  l      only PR-linked / worktree / live sessions
-  a            show archived sessions instead
+  a            also show archived sessions (archived in csm or Claude desktop)
 
 [b]Act[/b]
   enter        open the session: beside this list when running in tmux, otherwise
@@ -163,7 +163,7 @@ class CSM(App[Session | None]):
         Binding("p", "toggle('pr')", "PRs"),
         Binding("w", "toggle('worktree')", "Worktrees"),
         Binding("l", "toggle('live')", "Live"),
-        Binding("a", "toggle('archived')", "Archived", show=False),
+        Binding("a", "toggle('archived')", "Archived"),
         Binding("e", "expand_all", "Expand", show=False),
         Binding("y", "copy_id", "Copy id", show=False),
         Binding("d", "trash", "Delete", show=False),
@@ -176,8 +176,9 @@ class CSM(App[Session | None]):
     ]
 
     def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None,
-                 host: tmux.Tmux | None = None):
+                 host: tmux.Tmux | None = None, show_archived: bool = False):
         super().__init__()
+        self.desktop: dict[str, data.DesktopRecord] = {}
         self.host = host  # set when running as the sidebar of a tmux window
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
         self.shown_id: str | None = None
@@ -186,7 +187,7 @@ class CSM(App[Session | None]):
         self.state = data.State(self.paths.state)
         self.sessions: list[Session] = []
         self.live: dict[str, LiveSession] = {}
-        self.filters: set[str] = set()
+        self.filters: set[str] = {"archived"} if show_archived else set()
         self.query_text = ""
         self.mode = "filter"  # what the search box is doing: "filter" or "search"
         self.search_query = ""
@@ -221,11 +222,14 @@ class CSM(App[Session | None]):
     def load(self) -> None:
         sessions = data.load_sessions(self.paths)
         live = data.load_live(self.paths)
-        self.call_from_thread(self.set_sessions, sessions, live)
+        desktop = data.load_desktop(self.paths)
+        self.call_from_thread(self.set_sessions, sessions, live, desktop)
 
-    def set_sessions(self, sessions: list[Session], live: dict[str, LiveSession]) -> None:
-        changed = [(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
-        self.sessions, self.live = sessions, live
+    def set_sessions(self, sessions: list[Session], live: dict[str, LiveSession],
+                     desktop: dict[str, data.DesktopRecord]) -> None:
+        changed = ([(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
+                   or desktop != self.desktop)
+        self.sessions, self.live, self.desktop = sessions, live, desktop
         if changed or not self.loaded:
             self.loaded = True
             self.rebuild()
@@ -258,7 +262,7 @@ class CSM(App[Session | None]):
         tokens = self.query_text.lower().split()
         out: dict[str, list[Session]] = {}
         for s in self.sessions:  # newest first, so projects come out ordered by recent activity
-            if (s.id in self.state.archived) != ("archived" in self.filters):
+            if self.archived_by(s) and "archived" not in self.filters:
                 continue
             if "pr" in self.filters and not s.pr_number:
                 continue
@@ -274,12 +278,19 @@ class CSM(App[Session | None]):
             out.setdefault(s.project, []).append(s)
         return out
 
+    def archived_by(self, s: Session) -> str | None:
+        if s.id in self.state.archived:
+            return "csm"
+        if (rec := self.desktop.get(s.id)) and rec.archived:
+            return "Claude desktop"
+        return None
+
     def row(self, s: Session) -> Text:
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = ("▶ " if s.id == self.shown_id else "● " if live else "  ", style)
         icon = ("⇄ ", "green") if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
-        return Text.assemble(dot, icon, s.title)
+        return Text.assemble(dot, icon, (s.title, "dim italic" if self.archived_by(s) else ""))
 
     def rebuild(self) -> None:
         lst = self.query_one(SessionList)
@@ -318,8 +329,10 @@ class CSM(App[Session | None]):
 
     def update_status(self, count: int) -> None:
         parts = [f"{count} sessions", f"{len(self.live)} live"]
-        if self.filters:
-            parts.append("only " + ", ".join(FILTER_NAMES[f] for f in sorted(self.filters)))
+        if only := sorted(self.filters - {"archived"}):
+            parts.append("only " + ", ".join(FILTER_NAMES[f] for f in only))
+        if "archived" in self.filters:
+            parts.append("including archived")
         if self.query_text.strip():
             parts.append(f"filter “{self.query_text.strip()}”")
         if self.hits is not None:
@@ -378,8 +391,8 @@ class CSM(App[Session | None]):
                                        f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
         if s.pr_url:
             lines.append(Text.assemble(("⇄ ", "green"), (f"#{s.pr_number} ", "bold"), (s.pr_url, "dim")))
-        if s.id in self.state.archived:
-            lines.append(Text("archived", style="italic yellow"))
+        if by := self.archived_by(s):
+            lines.append(Text(f"archived in {by}", style="italic yellow"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
         if self.hits and s.id in self.hits:
             lines.append(Text(""))
@@ -618,6 +631,9 @@ class CSM(App[Session | None]):
     def action_archive(self) -> None:
         if not (s := self.selected()):
             return
+        if s.id not in self.state.archived and self.archived_by(s):
+            self.notify("Archived in Claude desktop; unarchive it there", severity="warning")
+            return
         archiving = s.id not in self.state.archived
         self.state.archived ^= {s.id}
         self.state.save()
@@ -657,19 +673,20 @@ def main() -> None:
     ap.add_argument("--no-tmux", action="store_true",
                     help="don't use tmux; resume sessions in this terminal and return to the list after")
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
+    ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
     ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
         host = tmux.Tmux(own=args.sidebar)
         host.mark_sidebar()
-        CSM(host=host).run()
+        CSM(host=host, show_archived=args.archived).run()
         return
     if not args.no_tmux and tmux.available():
-        tmux.launch([])  # does not return
+        tmux.launch(["--archived"] if args.archived else [])  # does not return
     focus = None
     claude = shutil.which("claude") or "claude"
     while True:
-        s = CSM(focus_id=focus).run()
+        s = CSM(focus_id=focus, show_archived=args.archived).run()
         if s is None:
             return
         print(f"\n\033[2mresuming\033[0m {s.title}  \033[2m({tilde(s.cwd)})\033[0m\n", flush=True)

@@ -15,7 +15,7 @@ csm
 
 Or run it without installing: `uv run csm`. For the side-by-side mode, `brew install tmux`.
 
-`csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
+`csm --archived` starts with archived sessions shown. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
 
 ### How the tmux mode works
 
@@ -37,11 +37,11 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `s` | search transcript text (runs on enter) |
 | `esc` | clear the filter and search |
 | `p` `w` `l` | only PR-linked / worktree / live sessions |
-| `a` | show archived sessions instead |
+| `a` | also show archived sessions (dimmed) |
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
-| `x` | archive / unarchive (hides it here only) |
+| `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
 | `?` | help |
@@ -54,6 +54,7 @@ Icons: green `⇄` PR linked, magenta `⑂` worktree, `○` other. A dot in fron
 - **Live status:** read from `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
 - **Parse cache:** `~/.cache/csm/index.json`, keyed on file mtime and size. The first run parses everything; after that only changed files are re-read.
 - **csm's own state:** archived ids and collapsed projects, in `~/.local/state/csm/state.json`.
+- **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`. csm never changes the desktop app's archive.
 
 Only rename and delete touch Claude's files. Rename appends one record to the transcript; delete moves the transcript to the Trash.
 

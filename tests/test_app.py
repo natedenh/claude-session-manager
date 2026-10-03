@@ -67,8 +67,38 @@ async def test_archive_hides_and_persists(sessions):
         await pilot.press("x")
         assert "s:b1" not in ids(app)
         await pilot.press("a")
-        assert ids(app) == ["s:b1"]
+        assert ids(app) == ["s:b1", "s:a2", "s:a1"]  # shown alongside the rest
+        assert "dim" in str(app.query_one(SessionList).get_option("s:b1").prompt.spans)
     assert data.State(sessions.state).archived == {"b1"}
+
+
+def desktop_record(paths, cli_id, archived, local_id="local_1"):
+    d = paths.desktop / "Claude-3p" / "claude-code-sessions" / "acct" / "org"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{local_id}.json").write_text(json.dumps(
+        {"sessionId": local_id, "cliSessionId": cli_id, "isArchived": archived, "title": "x"}))
+
+
+async def test_desktop_archived_sessions_are_hidden_until_shown(sessions):
+    desktop_record(sessions, "a2", True)
+    desktop_record(sessions, "b1", False, local_id="local_2")
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert ids(app) == ["s:b1", "s:a1"]
+        await pilot.press("a")
+        assert ids(app) == ["s:b1", "s:a2", "s:a1"]
+        app.query_one(SessionList).highlighted = app.query_one(SessionList).get_option_index("s:a2")
+        await pilot.press("x")  # can't unarchive a desktop archive from here
+        assert data.State(sessions.state).archived == set()
+
+
+async def test_show_archived_flag(sessions):
+    desktop_record(sessions, "a2", True)
+    app = CSM(sessions, show_archived=True)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert "s:a2" in ids(app)
 
 
 async def test_rename(sessions):

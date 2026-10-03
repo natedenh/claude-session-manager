@@ -31,6 +31,8 @@ class Paths:
     cache: Path = field(default_factory=lambda: Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "csm" / "index.json")
     state: Path = field(default_factory=lambda: Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "csm" / "state.json")
     trash: Path = HOME / ".Trash"
+    # Claude desktop's data dirs ("Claude", "Claude-3p", …) live here.
+    desktop: Path = HOME / "Library" / "Application Support"
 
     @property
     def projects(self) -> Path:
@@ -206,6 +208,39 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+@dataclass
+class DesktopRecord:
+    local_id: str  # the desktop app's id, "local_…"
+    archived: bool
+
+
+_desktop_cache: dict[str, tuple[float, DesktopRecord | None, str | None]] = {}
+
+
+def load_desktop(paths: Paths) -> dict[str, DesktopRecord]:
+    """Claude desktop's per-session records, keyed by transcript (CLI) session id.
+
+    Each lives at <data dir>/claude-code-sessions/<account>/<org>/local_<id>.json. They can
+    be large, so a file is only re-read when its mtime changes.
+    """
+    out = {}
+    for f in paths.desktop.glob("Claude*/claude-code-sessions/*/*/local_*.json"):
+        key = str(f)
+        try:
+            mtime = f.stat().st_mtime
+            cached = _desktop_cache.get(key)
+            if not cached or cached[0] != mtime:
+                d = json.loads(f.read_text())
+                rec = DesktopRecord(local_id=d.get("sessionId") or f.stem, archived=d.get("isArchived") is True)
+                cached = _desktop_cache[key] = (mtime, rec, d.get("cliSessionId"))
+        except (OSError, ValueError, AttributeError):
+            continue
+        _, rec, cli_id = cached
+        if rec and cli_id:
+            out[cli_id] = rec
+    return out
 
 
 def load_live(paths: Paths) -> dict[str, LiveSession]:

@@ -146,3 +146,16 @@ def test_state_roundtrip(paths):
     st.save()
     st2 = data.State(paths.state)
     assert st2.archived == {"a"} and st2.collapsed == {"/repo"}
+
+
+def test_load_desktop_maps_cli_ids(paths):
+    d = paths.desktop / "Claude-3p" / "claude-code-sessions" / "acct" / "org"
+    d.mkdir(parents=True)
+    (d / "local_a.json").write_text(json.dumps({"sessionId": "local_a", "cliSessionId": "x", "isArchived": True}))
+    (d / "local_b.json").write_text(json.dumps({"sessionId": "local_b", "cliSessionId": "y"}))
+    (d / "local_c.json").write_text("{broken")
+    recs = data.load_desktop(paths)
+    assert recs == {"x": data.DesktopRecord("local_a", True), "y": data.DesktopRecord("local_b", False)}
+    (d / "local_a.json").write_text(json.dumps({"sessionId": "local_a", "cliSessionId": "x", "isArchived": False}))
+    os.utime(d / "local_a.json", (time.time() + 5,) * 2)
+    assert not data.load_desktop(paths)["x"].archived
