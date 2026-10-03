@@ -1,0 +1,573 @@
+"""csm — browse, search and resume Claude Code sessions."""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import signal
+import subprocess
+import time
+from datetime import datetime
+
+from rich.console import Group
+from rich.rule import Rule
+from rich.text import Text
+from textual import on, work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Input, Label, OptionList, Static
+from textual.widgets.option_list import Option
+from textual.worker import get_current_worker
+
+from . import data
+from .data import LiveSession, Message, Session
+
+PER_PROJECT = 5
+STATUS_STYLE = {"idle": "green", "busy": "yellow"}
+FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "archived": "archived"}
+MAX_MESSAGE_CHARS = 2500
+
+HELP = """\
+[b]Navigate[/b]
+  ↑/↓ j/k      move              [ ]      previous / next project
+  enter        resume session, or collapse/expand a project
+  e            show every session in every project
+
+[b]Find[/b]
+  /            filter by title, project or branch (as you type)
+  s            search transcript text (press enter to run)
+  esc          clear the filter and search
+  p  w  l      only PR-linked / worktree / live sessions
+  a            show archived sessions instead
+
+[b]Act[/b]
+  enter        resume here (you come back to this list when claude exits)
+  o            resume in a new Ghostty window
+  r            rename                   x        archive / unarchive
+  y            copy session id          d        move transcript to the Trash
+  ctrl+r       reload                   q        quit
+
+[b]Icons[/b]
+  [green]⇄[/] PR linked   [magenta]⑂[/] worktree   [dim]○[/] other
+  [green]●[/] live, idle   [yellow]●[/] live, busy
+"""
+
+
+def ago(ts: float) -> str:
+    d = time.time() - ts
+    for unit, sec in (("d", 86400), ("h", 3600), ("m", 60)):
+        if d >= sec:
+            return f"{int(d // sec)}{unit} ago"
+    return "just now"
+
+
+def tilde(path: str) -> str:
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
+class SessionList(OptionList):
+    BINDINGS = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+    ]
+
+
+class Prompt(ModalScreen[str | None]):
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+
+    def __init__(self, title: str, value: str = ""):
+        super().__init__()
+        self.title_text, self.value = title, value
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.title_text)
+            yield Input(value=self.value, select_on_focus=True)
+
+    @on(Input.Submitted)
+    def submit(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class Confirm(ModalScreen[bool]):
+    BINDINGS = [
+        Binding("y", "answer(True)", show=False),
+        Binding("enter", "answer(True)", show=False),
+        Binding("n", "answer(False)", show=False),
+        Binding("escape", "answer(False)", show=False),
+    ]
+
+    def __init__(self, message: str):
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.message)
+            yield Label("[dim]y / enter = yes    n / esc = no[/]")
+
+    def action_answer(self, yes: bool) -> None:
+        self.dismiss(yes)
+
+
+class Help(ModalScreen[None]):
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(HELP)
+
+    def on_key(self) -> None:
+        self.dismiss(None)
+
+
+class CSM(App[Session | None]):
+    TITLE = "Claude sessions"
+    CSS = """
+    #search { margin: 0 1; border-title-color: $accent; }
+    #body { height: 1fr; }
+    #list { width: 38%; min-width: 34; max-width: 72; border: none; padding: 0; }
+    #list > .option-list--option { text-wrap: nowrap; text-overflow: ellipsis; }
+    #right { border-left: solid $panel-lighten-2; padding: 0 1 0 2; }
+    #meta { height: auto; }
+    #transcript { height: 1fr; }
+    #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
+    Prompt, Confirm, Help { align: center middle; }
+    .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
+    .dialog Input { margin-top: 1; }
+    Help .dialog { width: 84; }
+    """
+    BINDINGS = [
+        Binding("slash", "filter", "Filter"),
+        Binding("s", "search", "Search text"),
+        Binding("o", "open_window", "New window"),
+        Binding("r", "rename", "Rename"),
+        Binding("x", "archive", "Archive"),
+        Binding("p", "toggle('pr')", "PRs"),
+        Binding("w", "toggle('worktree')", "Worktrees"),
+        Binding("l", "toggle('live')", "Live"),
+        Binding("a", "toggle('archived')", "Archived", show=False),
+        Binding("e", "expand_all", "Expand", show=False),
+        Binding("y", "copy_id", "Copy id", show=False),
+        Binding("d", "trash", "Delete", show=False),
+        Binding("right_square_bracket", "jump(1)", "Next project", show=False),
+        Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
+        Binding("escape", "clear", "Clear", show=False),
+        Binding("ctrl+r", "reload", "Reload", show=False),
+        Binding("question_mark", "help", "Help"),
+        Binding("q", "quit", "Quit"),
+    ]
+
+    def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None):
+        super().__init__()
+        self.paths = paths or data.Paths()
+        self.focus_id = focus_id
+        self.state = data.State(self.paths.state)
+        self.sessions: list[Session] = []
+        self.live: dict[str, LiveSession] = {}
+        self.filters: set[str] = set()
+        self.query_text = ""
+        self.mode = "filter"  # what the search box is doing: "filter" or "search"
+        self.search_query = ""
+        self.hits: dict[str, list[str]] | None = None
+        self.expanded: set[str] = set()
+        self.by_id: dict[str, Session] = {}
+        self.loaded = False
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="/ to filter, s to search transcripts", id="search")
+        with Horizontal(id="body"):
+            yield SessionList(id="list")
+            with Vertical(id="right"):
+                yield Static(id="meta")
+                with VerticalScroll(id="transcript"):
+                    yield Static(id="messages")
+        yield Static("Loading sessions…", id="status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#search", Input).border_title = "filter"
+        self.query_one(SessionList).focus()
+        self.load()
+        self.set_interval(2, self.poll_live)
+        self.set_interval(20, self.load)
+
+    # ---- loading ---------------------------------------------------------
+
+    @work(thread=True, exclusive=True, group="load")
+    def load(self) -> None:
+        sessions = data.load_sessions(self.paths)
+        live = data.load_live(self.paths)
+        self.call_from_thread(self.set_sessions, sessions, live)
+
+    def set_sessions(self, sessions: list[Session], live: dict[str, LiveSession]) -> None:
+        changed = [(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
+        self.sessions, self.live = sessions, live
+        if changed or not self.loaded:
+            self.loaded = True
+            self.rebuild()
+
+    def poll_live(self) -> None:
+        live = data.load_live(self.paths)
+        if {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}:
+            self.live = live
+            self.rebuild()
+
+    # ---- list ------------------------------------------------------------
+
+    @property
+    def narrowed(self) -> bool:
+        return bool(self.query_text.strip() or self.hits is not None or self.filters - {"archived"})
+
+    def groups(self) -> dict[str, list[Session]]:
+        tokens = self.query_text.lower().split()
+        out: dict[str, list[Session]] = {}
+        for s in self.sessions:  # newest first, so projects come out ordered by recent activity
+            if (s.id in self.state.archived) != ("archived" in self.filters):
+                continue
+            if "pr" in self.filters and not s.pr_number:
+                continue
+            if "worktree" in self.filters and not s.worktree:
+                continue
+            if "live" in self.filters and s.id not in self.live:
+                continue
+            if self.hits is not None and s.id not in self.hits:
+                continue
+            haystack = f"{s.project_name} {s.title} {s.branch or ''}".lower()
+            if any(t not in haystack for t in tokens):
+                continue
+            out.setdefault(s.project, []).append(s)
+        return out
+
+    def row(self, s: Session) -> Text:
+        live = self.live.get(s.id)
+        dot = ("● ", STATUS_STYLE.get(live.status, "cyan")) if live else ("  ", "")
+        icon = ("⇄ ", "green") if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
+        return Text.assemble(dot, icon, s.title)
+
+    def rebuild(self) -> None:
+        lst = self.query_one(SessionList)
+        current = lst.highlighted_option.id if lst.highlighted_option else None
+        keep = f"s:{self.focus_id}" if self.focus_id else current
+        self.focus_id = None
+        groups = self.groups()
+        options: list[Option | None] = []
+        self.by_id = {}
+        for project, sessions in groups.items():
+            name = os.path.basename(project) or project
+            collapsed = project in self.state.collapsed and not self.narrowed
+            limit = None if self.narrowed or project in self.expanded else PER_PROJECT
+            shown = [] if collapsed else sessions[:limit]
+            if options:
+                options.append(Option("", disabled=True))
+            options.append(Option(Text.assemble(
+                ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions)}", "dim")),
+                id=f"p:{project}"))
+            for s in shown:
+                self.by_id[s.id] = s
+                options.append(Option(self.row(s), id=f"s:{s.id}"))
+            if len(shown) < len(sessions) and not collapsed:
+                options.append(Option(Text(f"    … {len(sessions) - len(shown)} more", style="dim italic"),
+                                      id=f"m:{project}"))
+        lst.clear_options()
+        lst.add_options(options)
+        ids = [o.id for o in lst.options]
+        if keep and keep in ids:
+            lst.highlighted = ids.index(keep)
+        elif ids:
+            lst.highlighted = next((i for i, x in enumerate(ids) if x and x.startswith("s:")), 0)
+        else:
+            self.show(None)
+        self.update_status(sum(len(v) for v in groups.values()))
+
+    def update_status(self, count: int) -> None:
+        parts = [f"{count} sessions", f"{len(self.live)} live"]
+        if self.filters:
+            parts.append("only " + ", ".join(FILTER_NAMES[f] for f in sorted(self.filters)))
+        if self.query_text.strip():
+            parts.append(f"filter “{self.query_text.strip()}”")
+        if self.hits is not None:
+            parts.append(f"text “{self.search_query}”: {len(self.hits)} sessions")
+        self.query_one("#status", Static).update("  ·  ".join(parts) + "    [dim]? help[/]")
+
+    def selected(self) -> Session | None:
+        opt = self.query_one(SessionList).highlighted_option
+        return self.by_id.get(opt.id[2:]) if opt and opt.id and opt.id.startswith("s:") else None
+
+    @on(OptionList.OptionHighlighted)
+    def highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self.show(self.selected())
+
+    @on(OptionList.OptionSelected)
+    def chosen(self, event: OptionList.OptionSelected) -> None:
+        kind, key = event.option.id[:2], event.option.id[2:]
+        if kind == "p:":
+            self.state.collapsed ^= {key}
+            self.state.save()
+            self.rebuild()
+        elif kind == "m:":
+            self.expanded.add(key)
+            self.rebuild()
+        elif s := self.by_id.get(key):
+            self.resume(s)
+
+    # ---- preview ---------------------------------------------------------
+
+    def show(self, s: Session | None) -> None:
+        meta = self.query_one("#meta", Static)
+        if s is None:
+            meta.update(Text("No session selected", style="dim"))
+            self.query_one("#messages", Static).update("")
+            return
+        meta.update(self.meta(s))
+        self.load_preview(s)
+
+    def meta(self, s: Session) -> Group:
+        lines = [Text(s.title, style="bold")]
+        info = [s.project_name]
+        if s.branch:
+            info.append(s.branch)
+        info.append(ago(s.mtime))
+        if s.started:
+            try:
+                info.append("started " + datetime.fromisoformat(s.started.replace("Z", "+00:00"))
+                            .astimezone().strftime("%b %-d %-I:%M %p"))
+            except ValueError:
+                pass
+        if s.cost:
+            info.append(f"${s.cost:,.2f}")
+        lines.append(Text("  ·  ".join(info), style="dim"))
+        if live := self.live.get(s.id):
+            lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
+                                       f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
+        if s.pr_url:
+            lines.append(Text.assemble(("⇄ ", "green"), (f"#{s.pr_number} ", "bold"), (s.pr_url, "dim")))
+        if s.id in self.state.archived:
+            lines.append(Text("archived", style="italic yellow"))
+        lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
+        if self.hits and s.id in self.hits:
+            lines.append(Text(""))
+            for snip in self.hits[s.id]:
+                t = Text("  " + snip, style="italic")
+                t.highlight_words([self.search_query], "reverse", case_sensitive=False)
+                lines.append(t)
+        lines.append(Rule(style="dim"))
+        return Group(*lines)
+
+    @work(thread=True, exclusive=True, group="preview")
+    def load_preview(self, s: Session) -> None:
+        try:
+            messages = data.transcript(s.path)
+        except OSError:
+            messages = []
+        if not get_current_worker().is_cancelled:
+            self.call_from_thread(self.show_messages, s, messages)
+
+    def show_messages(self, s: Session, messages: list[Message]) -> None:
+        if (cur := self.selected()) is None or cur.id != s.id:
+            return
+        parts = []
+        for m in messages:
+            text = m.text if len(m.text) <= MAX_MESSAGE_CHARS else m.text[:MAX_MESSAGE_CHARS] + " …"
+            if m.role == "user":
+                parts.append(Text.assemble(("❯ ", "bold cyan"), (text, "bold")))
+            elif m.role == "tools":
+                n = int(m.text)
+                parts.append(Text(f"  ran {n} tool call{'s' if n != 1 else ''}", style="dim"))
+            else:
+                parts.append(Text.assemble(("● ", "dim"), text))
+            parts.append(Text(""))
+        if self.query_text.strip():
+            for p in parts:
+                p.highlight_words(self.query_text.split(), "underline", case_sensitive=False)
+        if self.search_query and self.hits is not None:
+            for p in parts:
+                p.highlight_words([self.search_query], "reverse", case_sensitive=False)
+        self.query_one("#messages", Static).update(Group(*parts) if parts else Text("(no messages)", style="dim"))
+        self.query_one("#transcript", VerticalScroll).scroll_end(animate=False)
+
+    # ---- search box ------------------------------------------------------
+
+    def set_mode(self, mode: str) -> None:
+        box = self.query_one("#search", Input)
+        self.mode = mode
+        box.border_title = "filter" if mode == "filter" else "search transcripts (enter)"
+        box.value = self.query_text if mode == "filter" else self.search_query
+        box.focus()
+
+    def action_filter(self) -> None:
+        self.set_mode("filter")
+
+    def action_search(self) -> None:
+        self.set_mode("search")
+
+    @on(Input.Changed, "#search")
+    def typed(self, event: Input.Changed) -> None:
+        if self.mode == "filter" and event.value != self.query_text:
+            self.query_text = event.value
+            self.rebuild()
+
+    @on(Input.Submitted, "#search")
+    def submitted(self, event: Input.Submitted) -> None:
+        if self.mode == "search":
+            q = event.value.strip()
+            if not q:
+                self.hits, self.search_query = None, ""
+                self.rebuild()
+            else:
+                self.search_query = q
+                self.query_one("#status", Static).update(f"searching transcripts for “{q}”…")
+                self.run_search(q)
+        self.query_one(SessionList).focus()
+
+    @work(thread=True, exclusive=True, group="search")
+    def run_search(self, q: str) -> None:
+        worker = get_current_worker()
+        hits = data.search(self.sessions, q, cancelled=lambda: worker.is_cancelled)
+        if not worker.is_cancelled:
+            self.call_from_thread(self.apply_search, hits)
+
+    def apply_search(self, hits: dict[str, list[str]]) -> None:
+        self.hits = hits
+        self.rebuild()
+
+    def action_clear(self) -> None:
+        box = self.query_one("#search", Input)
+        self.query_text, self.search_query, self.hits = "", "", None
+        self.mode = "filter"
+        box.border_title = "filter"
+        box.value = ""
+        self.query_one(SessionList).focus()
+        self.rebuild()
+
+    # ---- filters and navigation -------------------------------------------
+
+    def action_toggle(self, name: str) -> None:
+        self.filters ^= {name}
+        self.rebuild()
+
+    def action_expand_all(self) -> None:
+        projects = {s.project for s in self.sessions}
+        self.expanded = set() if self.expanded >= projects else projects
+        self.state.collapsed.clear()
+        self.state.save()
+        self.rebuild()
+
+    def action_jump(self, step: int) -> None:
+        lst = self.query_one(SessionList)
+        heads = [i for i, o in enumerate(lst.options) if o.id and o.id.startswith("p:")]
+        if not heads:
+            return
+        cur = lst.highlighted or 0
+        ahead = [i for i in heads if (i > cur if step > 0 else i < cur)]
+        target = (ahead[0] if step > 0 else ahead[-1]) if ahead else (heads[0] if step > 0 else heads[-1])
+        # Land on the project's first session rather than its header, when it has one.
+        nxt = target + 1
+        if nxt < len(lst.options) and (lst.options[nxt].id or "").startswith("s:"):
+            target = nxt
+        lst.highlighted = target
+
+    def action_reload(self) -> None:
+        self.load()
+        self.notify("Reloading…", timeout=1)
+
+    def action_help(self) -> None:
+        self.push_screen(Help())
+
+    # ---- actions on a session --------------------------------------------
+
+    def resume(self, s: Session) -> None:
+        if live := self.live.get(s.id):
+            msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
+                   "Resuming it a second time means two processes writing one transcript. Resume anyway?")
+            self.push_screen(Confirm(msg), lambda yes: yes and self.exit(s))
+        else:
+            self.exit(s)
+
+    def action_open_window(self) -> None:
+        if not (s := self.selected()):
+            return
+        app = "/Applications/Ghostty.app"
+        if not os.path.isdir(app):
+            self.notify("Ghostty isn't installed in /Applications", severity="error")
+            return
+        claude = shutil.which("claude") or "claude"
+        subprocess.Popen(["open", "-na", app, "--args", f"--working-directory={s.cwd}",
+                          "-e", claude, "-r", s.id],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.notify(f"Opening “{s.title}” in a new window")
+
+    def action_rename(self) -> None:
+        if not (s := self.selected()):
+            return
+
+        def done(title: str | None) -> None:
+            if title and title != s.title:
+                data.rename(s, title)
+                s.title = title
+                self.rebuild()
+                self.show(s)
+        self.push_screen(Prompt("Rename session", s.title), done)
+
+    def action_archive(self) -> None:
+        if not (s := self.selected()):
+            return
+        archiving = s.id not in self.state.archived
+        self.state.archived ^= {s.id}
+        self.state.save()
+        self.notify(f"{'Archived' if archiving else 'Unarchived'} “{s.title}”", timeout=2)
+        self.rebuild()
+
+    def action_copy_id(self) -> None:
+        if not (s := self.selected()):
+            return
+        try:
+            subprocess.run(["pbcopy"], input=s.id.encode(), check=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.copy_to_clipboard(s.id)
+        self.notify(f"Copied {s.id}", timeout=2)
+
+    def action_trash(self) -> None:
+        if not (s := self.selected()):
+            return
+        if s.id in self.live:
+            self.notify("That session is running; close it first", severity="warning")
+            return
+
+        def done(yes: bool) -> None:
+            if yes:
+                dest = data.trash(s, self.paths)
+                self.notify(f"Moved to {tilde(str(dest))}", timeout=3)
+                self.load()
+        self.push_screen(Confirm(f"Move “{s.title}” to the Trash?"), done)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="csm", description=__doc__)
+    ap.add_argument("--once", action="store_true", help="exit after resuming instead of returning to the list")
+    args = ap.parse_args()
+    focus = None
+    claude = shutil.which("claude") or "claude"
+    while True:
+        s = CSM(focus_id=focus).run()
+        if s is None:
+            return
+        print(f"\n\033[2mresuming\033[0m {s.title}  \033[2m({tilde(s.cwd)})\033[0m\n", flush=True)
+        # A handler (unlike SIG_IGN) resets to the default on exec, so claude still gets ^C
+        # while we survive it and can bring the list back.
+        previous = signal.signal(signal.SIGINT, lambda *_: None)
+        try:
+            subprocess.run([claude, "-r", s.id], cwd=s.cwd if os.path.isdir(s.cwd) else None)
+        finally:
+            signal.signal(signal.SIGINT, previous)
+        if args.once:
+            return
+        focus = s.id
+
+
+if __name__ == "__main__":
+    main()
