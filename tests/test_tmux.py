@@ -51,3 +51,12 @@ def test_close(server):
     server.show("a", "/tmp", "sleep 600")
     assert server.close("a") and server.hosted() == {} and beside(server) == []
     assert not server.close("a")
+
+
+def test_respawned_sidebar_keeps_sessions_and_mark(server):
+    server.show("a", "/tmp", "sleep 600")
+    old_pid = server.run("display", "-p", "-t", server.me, "#{pane_pid}")
+    server.run("respawn-pane", "-k", "-t", server.me, "sleep 600")
+    assert server.run("display", "-p", "-t", server.me, "#{pane_pid}") != old_pid
+    assert server.hosted().keys() == {"a"} and beside(server) == ["a"]
+    assert next(p for p in server.panes() if p.id == server.me).sidebar

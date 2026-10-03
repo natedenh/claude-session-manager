@@ -37,6 +37,9 @@ def launch(extra: list[str]) -> None:
         t = Tmux(base)
         sidebar = next((p for p in t.panes() if p.sidebar), None)
         if sidebar:
+            # Restart the sidebar so an updated csm takes effect; sessions are separate panes
+            # and keep running.
+            t.run("respawn-pane", "-k", "-t", sidebar.id, cmd)
             t.run("select-window", "-t", sidebar.window)
             t.run("select-pane", "-t", sidebar.id)
         else:  # csm was quit but sessions are still running; give them a sidebar again
