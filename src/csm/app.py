@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -29,6 +30,23 @@ STATUS_STYLE = {"idle": "green", "busy": "yellow"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "archived": "archived"}
 MAX_MESSAGE_CHARS = 2500
 
+# argv: working directory, command line, "tab" or "window"
+GHOSTTY_OPEN = """
+on run argv
+  tell application id "com.mitchellh.ghostty"
+    set cfg to new surface configuration
+    set initial working directory of cfg to item 1 of argv
+    set command of cfg to item 2 of argv
+    if item 3 of argv is "tab" and (count of windows) > 0 then
+      new tab in front window with configuration cfg
+    else
+      new window with configuration cfg
+    end if
+    activate
+  end tell
+end run
+"""
+
 HELP = """\
 [b]Navigate[/b]
   ↑/↓ j/k      move              [ ]      previous / next project
@@ -44,7 +62,7 @@ HELP = """\
 
 [b]Act[/b]
   enter        resume here (you come back to this list when claude exits)
-  o            resume in a new Ghostty window
+  o / O        resume in a new Ghostty tab / window
   r            rename                   x        archive / unarchive
   y            copy session id          d        move transcript to the Trash
   ctrl+r       reload                   q        quit
@@ -144,7 +162,8 @@ class CSM(App[Session | None]):
     BINDINGS = [
         Binding("slash", "filter", "Filter"),
         Binding("s", "search", "Search text"),
-        Binding("o", "open_window", "New window"),
+        Binding("o", "open('tab')", "New tab"),
+        Binding("O", "open('window')", "New window", show=False),
         Binding("r", "rename", "Rename"),
         Binding("x", "archive", "Archive"),
         Binding("p", "toggle('pr')", "PRs"),
@@ -488,18 +507,27 @@ class CSM(App[Session | None]):
         else:
             self.exit(s)
 
-    def action_open_window(self) -> None:
+    def action_open(self, where: str) -> None:
         if not (s := self.selected()):
             return
-        app = "/Applications/Ghostty.app"
-        if not os.path.isdir(app):
-            self.notify("Ghostty isn't installed in /Applications", severity="error")
-            return
-        claude = shutil.which("claude") or "claude"
-        subprocess.Popen(["open", "-na", app, "--args", f"--working-directory={s.cwd}",
-                          "-e", claude, "-r", s.id],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.notify(f"Opening “{s.title}” in a new window")
+        if live := self.live.get(s.id):
+            msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
+                   f"Open it in a new {where} anyway?")
+            self.push_screen(Confirm(msg), lambda yes: yes and self.open_in_ghostty(s, where))
+        else:
+            self.open_in_ghostty(s, where)
+
+    @work(thread=True, group="ghostty")
+    def open_in_ghostty(self, s: Session, where: str) -> None:
+        # AppleScript drives the running Ghostty. `open -na Ghostty.app` would start a
+        # second instance, which restores every saved tab alongside the new one.
+        command = shlex.join([shutil.which("claude") or "claude", "-r", s.id])
+        result = subprocess.run(["osascript", "-", s.cwd, command, where],
+                                input=GHOSTTY_OPEN, capture_output=True, text=True)
+        if result.returncode:
+            self.call_from_thread(self.notify, f"Ghostty: {result.stderr.strip() or 'failed'}", severity="error")
+        else:
+            self.call_from_thread(self.notify, f"Opened “{s.title}” in a new {where}", timeout=2)
 
     def action_rename(self) -> None:
         if not (s := self.selected()):

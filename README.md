@@ -25,7 +25,7 @@ Or run it without installing: `uv run csm`. Use `csm --once` to exit after resum
 | `p` `w` `l` | only PR-linked / worktree / live sessions |
 | `a` | show archived sessions instead |
 | `e` | show every session (5 per project by default) |
-| `o` | resume in a new Ghostty window |
+| `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `x` | archive / unarchive (hides it here only) |
 | `y` | copy the session id |

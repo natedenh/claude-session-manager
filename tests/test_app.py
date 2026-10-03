@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 
 import pytest
 from conftest import assistant, rec, user
@@ -107,3 +108,18 @@ async def test_live_session_asks_before_resuming(sessions):
         await pilot.press("n")
         await pilot.press("enter", "y")
     assert app.return_value.id == "b1"
+
+
+async def test_open_in_ghostty_scripts_running_app(sessions, monkeypatch):
+    calls = []
+    monkeypatch.setattr("csm.app.subprocess.run",
+                        lambda argv, **kw: calls.append((argv, kw)) or subprocess.CompletedProcess(argv, 0, "", ""))
+    monkeypatch.setattr("csm.app.shutil.which", lambda _: "/bin/claude")
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("o")
+        await settle(pilot)
+    [(argv, kw)] = calls
+    assert argv[:2] == ["osascript", "-"] and argv[3:] == ["/bin/claude -r b1", "tab"]
+    assert argv[2].endswith("/beta") and "new tab in front window" in kw["input"]
