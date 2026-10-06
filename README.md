@@ -33,7 +33,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `enter` | open the session (beside the list in tmux, else in this terminal), or collapse/expand a project header |
 | `ctrl+\` | (tmux) switch focus between the list and the session |
 | `c` | (tmux) stop the session's claude process |
-| `/` | filter by title, project or branch as you type |
+| `/` | filter by title, project, branch or note as you type; `#tag` matches sessions with that tag (prefix match) |
 | `s` | search transcript text (runs on enter) |
 | `esc` | clear the filter, search and marks |
 | `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
@@ -55,6 +55,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `W` | clean up worktrees (see below) |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |
+| `#` | edit tags (`#waiting-on-chris #blocked`) for the highlighted session; for marked sessions the tags are added to each. Shown dim after the title |
+| `i` | edit a one-line note for the highlighted session (empty removes it). Tags and note show in the preview |
 | `v` | switch between the grouped view and a flat, newest-first list |
 | `space` | mark / unmark a session; `x`, `d` and `E` then act on all marked sessions, `esc` clears the marks |
 | `?` | help |
@@ -84,7 +86,7 @@ Off by default. `A` opens a dialog to turn on a rule that hides a session once i
 - **Sessions:** read from `~/.claude/projects/*/*.jsonl`. `CLAUDE_CONFIG_DIR` is honored.
 - **Live status:** read from `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
 - **Parse cache:** `~/.cache/csm/index.json`, keyed on file mtime and size. The first run parses everything; after that only changed files are re-read.
-- **csm's own state:** archived ids and collapsed projects, in `~/.local/state/csm/state.json`.
+- **csm's own state:** archived ids, collapsed projects, pinned sessions, the flat-view setting, and session tags and notes, in `~/.local/state/csm/state.json`.
 - **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`. csm never changes the desktop app's archive.
 
 - **Exports:** `E` writes `<date> <title>.md` (front matter, then the whole conversation) to `~/Downloads/claude-sessions/`. Change the folder with `--export-dir` or `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
