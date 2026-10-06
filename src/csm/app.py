@@ -64,6 +64,8 @@ HELP = """\
             A session already open in a Ghostty tab or Claude desktop is shown there.
   ctrl+\\    (tmux) switch focus between this list and the session
   n / N     new session in the highlighted project / in a new worktree
+  |         (tmux) show the highlighted session as a second pane; enter goes back to one
+  R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
   o / O     resume in a new Ghostty tab / window
   c         (tmux) stop the session's claude process
@@ -208,6 +210,8 @@ class CSM(App[Session | None]):
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
         Binding("N", "new(True)", "New in worktree", show=False),
+        Binding("R", "reply", "Reply", show=False),
+        Binding("vertical_line", "open_also", "Side by side", show=False),
         Binding("f", "fork", "Fork", show=False),
         Binding("r", "rename", "Rename", show=False),
         Binding("x", "archive", "Archive", show=False),
@@ -242,6 +246,7 @@ class CSM(App[Session | None]):
         self.host = host  # set when running as the sidebar of a tmux window
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
         self.shown_id: str | None = None
+        self.shown_ids: list[str] = []  # every session visible beside the list
         self.paths = paths or data.Paths()
         self.focus_id = focus_id
         self.state = data.State(self.paths.state)
@@ -348,11 +353,12 @@ class CSM(App[Session | None]):
     def poll_host(self) -> bool:
         """Refresh which sessions run on our tmux server. Returns True if anything changed."""
         try:
-            hosted, shown = self.host.hosted(), self.host.shown()
+            hosted, shown = self.host.hosted(), self.host.shown_all()
         except (subprocess.CalledProcessError, OSError):
             return False
-        changed = (hosted, shown) != (self.hosted, self.shown_id)
-        self.hosted, self.shown_id = hosted, shown
+        changed = (hosted, shown) != (self.hosted, self.shown_ids)
+        self.hosted, self.shown_ids = hosted, shown
+        self.shown_id = shown[0] if shown else None
         return changed
 
 
@@ -407,7 +413,7 @@ class CSM(App[Session | None]):
         return out if not self.narrowed else {}
 
     def pending_row(self, p: Pending) -> Text:
-        dot = "▶ " if p.id == self.shown_id else "● "
+        dot = "▶ " if p.id in self.shown_ids else "● "
         return Text.assemble((dot, "cyan"), ("○ ", "dim"), (p.launch.label, "italic"))
 
     def tags(self, s: Session, with_project: bool) -> tuple[Text, Text]:
@@ -426,7 +432,7 @@ class CSM(App[Session | None]):
         return Text.assemble(mark, dot, icon, (s.title, title), fork, project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
-        if s.id == self.shown_id:
+        if s.id in self.shown_ids:
             return "▶ ", style
         if s.id in self.waiting:
             return "◆ ", "bold " + style
@@ -747,16 +753,16 @@ class CSM(App[Session | None]):
         else:
             self.call_from_thread(self.start, s)
 
-    def start(self, s: Session) -> None:
-        self.start_launch(launch.resume(s.id, s.cwd, s.title))
+    def start(self, s: Session, also: bool = False) -> None:
+        self.start_launch(launch.resume(s.id, s.cwd, s.title), also)
 
-    def start_launch(self, l: Launch) -> None:
+    def start_launch(self, l: Launch, also: bool = False) -> None:
         self.waiting.discard(l.focus_id)
         if not self.host:
             self.exit(l)
             return
         try:
-            self.host.show(l.focus_id, l.cwd, l.command, l.label[:40])
+            (self.host.show_also if also else self.host.show)(l.focus_id, l.cwd, l.command, l.label[:40])
         except subprocess.CalledProcessError as e:
             self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
         self.poll_host()
@@ -789,6 +795,32 @@ class CSM(App[Session | None]):
     def action_fork(self) -> None:
         if s := self.selected():
             self.begin(launch.fork(s.id, s.cwd, s.title), s.project)
+
+    def action_open_also(self) -> None:
+        if not self.host:
+            self.notify("Side by side needs csm running in tmux", severity="warning")
+        elif s := self.selected():
+            self.start(s, also=True)
+
+    def action_reply(self) -> None:
+        if not (s := self.selected()):
+            return
+        if not self.host or s.id not in self.hosted:
+            self.notify("Replies only work for sessions opened in csm", severity="warning")
+            return
+
+        def done(text: str | None) -> None:
+            if not text:
+                return
+            try:
+                sent = self.host.send(s.id, text)
+            except subprocess.CalledProcessError as e:
+                self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
+                return
+            self.waiting.discard(s.id)
+            self.rebuild()
+            self.notify(f"Sent to “{s.title}”" if sent else "That session is no longer running", timeout=2)
+        self.push_screen(Prompt(f"Reply to {s.title}"), done)
 
     def action_close_session(self) -> None:
         if not (s := self.selected()):

@@ -32,6 +32,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `↑↓` / `j k`, `[ ]` | move; jump to the previous/next project |
 | `enter` | open the session (beside the list in tmux, else in this terminal), or collapse/expand a project header |
 | `ctrl+\` | (tmux) switch focus between the list and the session |
+| `R` | (tmux) reply to the highlighted session without opening it: types your text and Enter into its pane |
+| `\|` | (tmux) show the highlighted session as a second pane below the current one; `enter` on any session goes back to one |
 | `c` | (tmux) stop the session's claude process |
 | `/` | filter by title, project or branch as you type |
 | `s` | search transcript text (runs on enter) |
@@ -58,7 +60,7 @@ While any session is working, a wave moves along the bottom of the list next to 
 
 Forks are marked `⑃`, and the preview says which session they came from. A fork copies its original's conversation, title included, so csm links them by their shared first record.
 
-Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
+Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks every session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
 
 ## PR status
 

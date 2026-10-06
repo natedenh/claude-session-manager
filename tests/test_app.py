@@ -174,7 +174,7 @@ async def test_live_session_in_ghostty_tab_is_focused(sessions, monkeypatch, tmp
 class FakeHost:
     def __init__(self):
         self.calls, self.panes, self.visible, self.own = [], {}, None, True
-        self.cwds = {}
+        self.cwds, self.also = {}, []
 
     def hosted(self):
         return dict(self.panes)
@@ -182,16 +182,30 @@ class FakeHost:
     def shown(self):
         return self.visible
 
+    def shown_all(self):
+        return list(self.also)
+
+    def show_also(self, sid, cwd, command, name=""):
+        self.calls.append(("show_also", sid, command))
+        self.panes.setdefault(sid, f"%{len(self.panes) + 1}")
+        self.also = [*self.also, sid] if self.also else [sid]
+        self.visible = self.also[0]
+
+    def send(self, sid, text):
+        self.calls.append(("send", sid, text))
+        return sid in self.panes
+
     def show(self, sid, cwd, command, name=""):
         self.calls.append(("show", sid, command))
         self.cwds[sid] = cwd
         self.panes.setdefault(sid, f"%{len(self.panes) + 1}")
-        self.visible = sid
+        self.visible, self.also = sid, [sid]
 
     def close(self, sid):
         self.calls.append(("close", sid))
         self.panes.pop(sid, None)
-        self.visible = None if self.visible == sid else self.visible
+        self.also = [x for x in self.also if x != sid]
+        self.visible = self.also[0] if self.also else None
 
     def detach(self):
         self.calls.append(("detach",))
@@ -424,3 +438,38 @@ async def test_escape_clears_marks(sessions):
         assert app.marked
         await pilot.press("escape")
         assert not app.marked
+
+
+async def test_reply_sends_to_hosted_session_and_clears_waiting(sessions):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("R")  # not hosted yet
+        await settle(pilot)
+        assert len(app.screen_stack) == 1 and not any(c[0] == "send" for c in host.calls)
+        await pilot.press("enter")
+        await settle(pilot)
+        app.waiting.add("b1")
+        await pilot.press("R")
+        await settle(pilot)
+        await pilot.press(*"hi there", "enter")
+        await settle(pilot)
+        assert ("send", "b1", "hi there") in host.calls and "b1" not in app.waiting
+
+
+async def test_side_by_side_marks_both_sessions(sessions):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot)
+        first = app.query_one(SessionList).highlighted_option.id
+        await pilot.press("down", "down")  # past the alpha header
+        await pilot.press("vertical_line")
+        await settle(pilot)
+        assert [c[0] for c in host.calls] == ["show", "show_also"] and len(app.shown_ids) == 2
+        lst = app.query_one(SessionList)
+        marked = [o.id for o in lst.options if str(o.prompt).lstrip().startswith("▶")]
+        assert first in marked and len(marked) == 2

@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -60,3 +61,34 @@ def test_respawned_sidebar_keeps_sessions_and_mark(server):
     assert server.run("display", "-p", "-t", server.me, "#{pane_pid}") != old_pid
     assert server.hosted().keys() == {"a"} and beside(server) == ["a"]
     assert next(p for p in server.panes() if p.id == server.me).sidebar
+
+
+def test_send_types_literal_text(server):
+    server.show("a", "/tmp", "cat")
+    text = "-n hello $HOME; x"
+    assert server.send("a", text)
+    for _ in range(30):
+        out = server.run("capture-pane", "-p", "-t", server.hosted()["a"])
+        if out.count(text) == 2:  # the tty echo, then cat's copy
+            break
+        time.sleep(0.1)
+    assert out.count(text) == 2
+    assert not server.send("missing", "x")
+
+
+def test_show_also_splits_and_show_collapses(server):
+    server.show("a", "/tmp", "sleep 600")
+    server.show_also("b", "/tmp", "sleep 600")
+    assert server.shown_all() == ["a", "b"] and server.shown() == "a"
+    assert beside(server) == ["a", "b"]
+    server.show_also("b", "/tmp", "sleep 600")  # already visible
+    assert server.shown_all() == ["a", "b"]
+    server.show("b", "/tmp", "sleep 600")
+    assert server.shown_all() == ["b"] and set(server.hosted()) == {"a", "b"}
+    server.show("a", "/tmp", "sleep 600")
+    assert server.shown_all() == ["a"]
+
+
+def test_show_also_with_nothing_shown_is_plain_show(server):
+    server.show_also("a", "/tmp", "sleep 600")
+    assert server.shown_all() == ["a"]
