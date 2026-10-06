@@ -47,9 +47,11 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
-| `esc` | clear the filter, search and marks |
-| `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
 | `W` | clean up worktrees (see below) |
+| `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
+| `*` | pin / unpin a session (pinned sessions form a group at the top) |
+| `v` | switch between the grouped view and a flat, newest-first list |
+| `space` | mark / unmark a session; `x`, `d` and `E` then act on all marked sessions, `esc` clears the marks |
 | `?` | help |
 
 While any session is working, a wave moves along the bottom of the list next to a count ("2 working"). When everything is idle, it rests as a flat line and stops redrawing.
