@@ -380,9 +380,12 @@ class State:
             d = {}
         self.archived: set[str] = set(d.get("archived", []))
         self.collapsed: set[str] = set(d.get("collapsed", []))
+        self.pinned: set[str] = set(d.get("pinned", []))
+        self.flat: bool = bool(d.get("flat", False))
 
     def save(self) -> None:
-        _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed)})
+        _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
+                                "pinned": sorted(self.pinned), "flat": self.flat})
 
 
 def _write_json(path: Path, obj) -> None:

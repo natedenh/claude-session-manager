@@ -250,3 +250,98 @@ async def test_desktop_session_with_bad_id_falls_back_to_confirm(sessions, monke
         await pilot.press("enter")
         await settle(pilot)
         assert len(app.screen_stack) == 2  # confirm dialog
+
+
+def goto(app, sid):
+    lst = app.query_one(SessionList)
+    lst.highlighted = [o.id for o in lst.options].index(f"s:{sid}")
+
+
+def headers(app):
+    return [str(o.prompt) for o in app.query_one(SessionList).options if o.id and o.id.startswith("p:")]
+
+
+async def test_pin_moves_to_pinned_group_and_persists(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        goto(app, "a1")
+        assert app.selected().id == "a1"
+        await pilot.press("asterisk")
+        assert ids(app) == ["s:a1", "s:b1", "s:a2"]
+        assert headers(app)[0].startswith("▾ Pinned")
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert ids(app) == ["s:a1", "s:b1", "s:a2"]
+        assert "alpha" in str(app.query_one(SessionList).options[1].prompt)
+        await pilot.press("asterisk")  # the pinned session is highlighted first
+        assert ids(app) == ["s:b1", "s:a2", "s:a1"]
+
+
+async def test_pinned_obeys_filter(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        goto(app, "a1")
+        await pilot.press("asterisk")
+        await pilot.press("p")
+        assert ids(app) == ["s:a2"]
+        assert not any("Pinned" in h for h in headers(app))
+
+
+async def test_flat_view_order_and_persistence(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("v")
+        assert headers(app) == []
+        assert ids(app) == ["s:b1", "s:a2", "s:a1"]
+        assert "beta" in str(app.query_one(SessionList).options[0].prompt)
+        goto(app, "a2")
+        await pilot.press("asterisk", "right_square_bracket")  # jump is harmless
+        assert ids(app) == ["s:a2", "s:b1", "s:a1"]
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert app.state.flat
+        assert len(headers(app)) == 1  # only Pinned
+        await pilot.press("v")
+        assert not app.state.flat and len(headers(app)) == 3
+
+
+async def test_multi_select_archive(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("space", "space")  # b1, a2
+        assert app.marked == {"b1", "a2"}
+        assert "2 marked" in str(app.query_one("#status").render())
+        await pilot.press("x")
+        assert app.state.archived == {"b1", "a2"} and not app.marked
+        assert ids(app) == ["s:a1"]
+
+
+async def test_multi_select_trash_confirm_and_skip_live(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        app.live["a2"] = data.LiveSession(pid=1, session_id="a2", status="idle", entrypoint="cli")
+        await pilot.press("space", "space", "space")  # b1, a2, a1
+        await pilot.press("d")
+        await pilot.pause()
+        assert "2 sessions" in str(app.screen.query_one("Label").render())
+        await pilot.press("y")
+        await settle(pilot)
+        assert ids(app) == ["s:a2"] and not app.marked
+        assert len(list(sessions.trash.glob("*.jsonl"))) == 2
+
+
+async def test_escape_clears_marks(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("space")
+        assert app.marked
+        await pilot.press("escape")
+        assert not app.marked
