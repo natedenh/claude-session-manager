@@ -49,6 +49,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
 | `esc` | clear the filter, search and marks |
 | `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
+| `W` | clean up worktrees (see below) |
 | `?` | help |
 
 Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
@@ -56,6 +57,10 @@ Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree
 ## PR status
 
 For sessions linked to a pull request, csm asks `gh pr view` for its state, checks and review decision in the background (one PR at a time, newest session first) and colors the `⇄` icon: green is open with checks passing, yellow is checks pending or review required, red is checks failing or changes requested, magenta is merged, dim is closed or draft. The preview header shows the details, e.g. `open · checks 12/12 passing · approved`. Results are cached in `~/.cache/csm/prs.json`: open PRs refresh after 5 minutes, merged and closed ones at most daily. If `gh` is missing or not logged in, the icon stays plain green.
+
+## Worktree cleanup
+
+`W` lists every worktree under `<project>/.claude/worktrees/` for the projects csm knows, confirmed against what git has registered. Each row shows its branch, the sessions that used it, last activity, PR state (from the cache above), uncommitted files and commits not on any remote branch. Worktrees whose PR is merged or closed, or that saw no session activity for 14+ days, are flagged and sorted first; ones with a running session never are. `d` or `x` removes the selected one after a confirmation that warns about uncommitted or unpushed work. It runs plain `git worktree remove` (never `--force`), so git refuses a dirty worktree and csm shows its message. Registered worktrees whose directory is gone show as `missing`, and removing one runs `git worktree prune`. Branches are never deleted.
 
 ## Data
 

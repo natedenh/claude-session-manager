@@ -18,7 +18,7 @@ from typing import Callable
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 2  # bump whenever parse_session changes
+CACHE_VERSION = 3  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -56,6 +56,7 @@ class Session:
     pr_number: int | None = None
     pr_url: str | None = None
     worktree: bool = False
+    worktrees: list[str] = field(default_factory=list)  # worktree directories its cwds used
     cost: float | None = None
     started: str | None = None  # ISO timestamp of the first record
     mtime: float = 0.0
@@ -101,6 +102,12 @@ def message_text(content) -> str | None:
 def is_prompt(text: str | None) -> bool:
     """User records also carry slash-command wrappers and system injections, which start with '<'."""
     return bool(text and text.strip()) and not text.lstrip().startswith("<")
+
+
+def worktree_root(cwd: str) -> str:
+    """<repo>/.claude/worktrees/<name>/sub/dir -> <repo>/.claude/worktrees/<name>"""
+    repo, _, rest = cwd.partition(WORKTREE_MARK)
+    return repo + WORKTREE_MARK + rest.split("/")[0]
 
 
 def parse_session(path: Path) -> Session | None:
@@ -160,11 +167,12 @@ def parse_session(path: Path) -> Session | None:
         where = "/" + re.sub(r"--claude-worktrees-.*", "", path.parent.name).lstrip("-").replace("-", "/")
     project = where.split(WORKTREE_MARK)[0]
     worktree = any(c.startswith(project + WORKTREE_MARK) for c in [where, *cwds])
+    worktrees = list(dict.fromkeys(worktree_root(c) for c in [where, *cwds] if WORKTREE_MARK in c))
     cwd = next((c for c in (home, where, project) if c and os.path.isdir(c)), project)
 
     return Session(
         id=path.stem, path=str(path), title=title, project=project, cwd=cwd, branch=branch,
-        pr_number=pr, pr_url=pr_url, worktree=worktree, cost=cost, started=started,
+        pr_number=pr, pr_url=pr_url, worktree=worktree, worktrees=worktrees, cost=cost, started=started,
         mtime=st.st_mtime, size=st.st_size,
     )
 
