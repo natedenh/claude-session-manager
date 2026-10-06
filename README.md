@@ -64,7 +64,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `space` | mark / unmark a session; `x`, `d` and `E` then act on all marked sessions, `esc` clears the marks |
 | `?` | help |
 
-While any session is working, a wave moves along the bottom of the list next to a count ("2 working"). When everything is idle, it rests as a flat line and stops redrawing.
+While any session is working, a thin wave moves along the bottom of the list next to a count ("2 working"), with a coral spark sweeping across it (two when three or more sessions are working). The wave rises when work starts, grows a little livelier with more sessions, and settles back to a flat line when everything is idle, at which point it stops redrawing.
 
 The preview header shows how full the context window is (`context ▰▰▰▰▰▱▱▱▱▱ 52%`, yellow past 50%, red past 80%), and rows above 80% get a red `◔` after the title; the window is 200k tokens, or 1M for `[1m]` models and any session already past 200k.
 
