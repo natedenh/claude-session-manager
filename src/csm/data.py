@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from . import autoarchive
+
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
 CACHE_VERSION = 4  # bump whenever parse_session changes
@@ -423,10 +425,13 @@ class State:
         self.collapsed: set[str] = set(d.get("collapsed", []))
         self.pinned: set[str] = set(d.get("pinned", []))
         self.flat: bool = bool(d.get("flat", False))
+        self.keep: set[str] = set(d.get("keep", []))
+        self.auto_archive: dict = autoarchive.normalize(d.get("auto_archive"))
 
     def save(self) -> None:
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
-                                "pinned": sorted(self.pinned), "flat": self.flat})
+                                "pinned": sorted(self.pinned), "flat": self.flat,
+                                "keep": sorted(self.keep), "auto_archive": self.auto_archive})
 
 
 def _write_json(path: Path, obj) -> None:

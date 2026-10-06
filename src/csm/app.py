@@ -19,11 +19,11 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Input, Label, OptionList, Static
+from textual.widgets import Footer, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, export, ghostty, launch, notify, prs, tmux
+from . import autoarchive, data, desktop, export, ghostty, launch, notify, prs, tmux
 from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session
@@ -57,7 +57,7 @@ HELP = """\
   s         search transcript text (enter runs it)
   esc       clear the filter, search and marks
   p w l !   only PR-linked / worktree / live / waiting-for-you sessions
-  a         also show archived sessions (archived in csm or Claude desktop)
+  a         also show archived sessions (archived in csm, Claude desktop or the auto rule)
 
 [b]Open[/b]
   enter     beside this list in tmux, otherwise here (back to the list when claude exits).
@@ -71,6 +71,7 @@ HELP = """\
 [b]Manage[/b]
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
+  A         auto-archive rule (merged PRs, idle sessions); x keeps an auto-archived one
   E         export to Markdown (marked, or highlighted)
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
@@ -168,6 +169,36 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(yes)
 
 
+class AutoArchiveSettings(ModalScreen[dict | None]):
+    BINDINGS = [Binding("escape", "cancel", show=False), Binding("ctrl+s", "save", show=False)]
+
+    def __init__(self, rule: dict):
+        super().__init__()
+        self.rule = rule
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label("Auto-archive (never live, pinned or kept sessions)")
+            with Horizontal(classes="row"):
+                yield Switch(self.rule["enabled"], id="enabled")
+                yield Label("enabled")
+            yield Label("PR merged more than this many days ago")
+            yield Input(str(self.rule["merged_days"]), type="integer", id="merged_days")
+            yield Label("no activity for this many days")
+            yield Input(str(self.rule["idle_days"]), type="integer", id="idle_days")
+            yield Label("[dim]enter / ctrl+s = save    esc = cancel[/]")
+
+    @on(Input.Submitted)
+    def action_save(self) -> None:
+        self.dismiss(autoarchive.normalize({
+            "enabled": self.query_one("#enabled", Switch).value,
+            **{k: int(v) if (v := self.query_one(f"#{k}", Input).value.strip()).isdigit() else None
+               for k in ("merged_days", "idle_days")}}))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class Help(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
@@ -193,7 +224,8 @@ class CSM(App[Session | None]):
         scrollbar-background-active: $background; }
     #activity { height: 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
-    Prompt, Confirm, Help { align: center middle; }
+    Prompt, Confirm, Help, AutoArchiveSettings { align: center middle; }
+    .dialog .row { height: auto; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
     .dialog Input { margin-top: 1; }
     Help .dialog { width: 96; max-height: 90%; overflow-y: auto; }
@@ -223,6 +255,7 @@ class CSM(App[Session | None]):
         Binding("y", "copy_id", "Copy id", show=False),
         Binding("d", "trash", "Delete", show=False),
         Binding("E", "export", "Export", show=False),
+        Binding("A", "auto_archive", "Auto-archive", show=False),
         Binding("right_square_bracket", "jump(1)", "Next project", show=False),
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
@@ -396,7 +429,12 @@ class CSM(App[Session | None]):
             return "csm"
         if (rec := self.desktop.get(s.id)) and rec.archived:
             return "Claude desktop"
-        return None
+        return "auto" if self.auto_reason(s) else None
+
+    def auto_reason(self, s: Session) -> str | None:
+        st = self.pr_status.get(s.pr_url or "")
+        exempt = s.id in self.live or s.id in self.state.pinned or s.id in self.state.keep
+        return autoarchive.reason(self.state.auto_archive, s.mtime, st.merged_at if st else None, time.time(), exempt)
 
     def pending_groups(self) -> dict[str, list[Pending]]:
         known = {s.id for s in self.sessions}
@@ -495,6 +533,8 @@ class CSM(App[Session | None]):
             parts.append(f"{len(self.waiting)} waiting")
         if only := sorted(self.filters - {"archived"}):
             parts.append("only " + ", ".join(FILTER_NAMES[f] for f in only))
+        if self.state.auto_archive["enabled"] and (n := sum(self.archived_by(s) == "auto" for s in self.sessions)):
+            parts.append(f"{n} auto-archived")
         if "archived" in self.filters:
             parts.append("including archived")
         if self.query_text.strip():
@@ -567,7 +607,7 @@ class CSM(App[Session | None]):
             lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
                                        pr_summary(st) + "  " if st else "", (s.pr_url, "dim")))
         if by := self.archived_by(s):
-            lines.append(Text(f"archived in {by}", style="italic yellow"))
+            lines.append(Text(self.auto_reason(s) if by == "auto" else f"archived in {by}", style="italic yellow"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
         if self.hits and s.id in self.hits:
             lines.append(Text(""))
@@ -895,6 +935,13 @@ class CSM(App[Session | None]):
         targets = self.targets()
         if not targets:
             return
+        if auto := [s for s in targets if self.archived_by(s) == "auto"]:
+            self.state.keep |= {s.id for s in auto}
+            self.state.save()
+            self.notify(f"Keeping {len(auto)} auto-archived session{'s' * (len(auto) > 1)}", timeout=2)
+            self.marked.clear()
+            self.rebuild()
+            return
         if len(targets) == 1 and (s := targets[0]).id not in self.state.archived and self.archived_by(s):
             self.notify("Archived in Claude desktop; unarchive it there", severity="warning")
             return
@@ -907,6 +954,14 @@ class CSM(App[Session | None]):
         self.notify(f"{'Archived' if archiving else 'Unarchived'} {what}", timeout=2)
         self.marked.clear()
         self.rebuild()
+
+    def action_auto_archive(self) -> None:
+        def done(rule: dict | None) -> None:
+            if rule is not None:
+                self.state.auto_archive = rule
+                self.state.save()
+                self.rebuild()
+        self.push_screen(AutoArchiveSettings(self.state.auto_archive), done)
 
     def action_copy_id(self) -> None:
         if not (s := self.selected()):
