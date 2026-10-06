@@ -29,7 +29,7 @@ def beside(t):
 
 def test_config_binds_switch_key_and_drops_prefix(server):
     assert server.run("show", "-gv", "prefix") == "None"
-    assert "select-pane -R" in server.run("list-keys", "-T", "root")
+    assert "select-pane -t :.+" in server.run("list-keys", "-T", "root")
 
 
 def test_show_swaps_sessions_and_keeps_them_running(server):
@@ -102,4 +102,15 @@ def test_launch_reloads_config_on_a_running_server(server, monkeypatch):
     server.run("unbind-key", "-n", "C-\\")
     with pytest.raises(SystemExit):
         tmux.launch([])
-    assert "select-pane -R" in server.run("list-keys", "-T", "root")
+    assert "select-pane -t :.+" in server.run("list-keys", "-T", "root")
+
+
+def test_next_pane_cycles_sidebar_top_bottom(server):
+    server.show("a", "/tmp", "sleep 600")
+    server.show_also("b", "/tmp", "sleep 600")
+    server.run("select-pane", "-t", server.me)
+    order = []
+    for _ in range(3):
+        server.run("select-pane", "-t", ":.+")
+        order.append(server.run("display", "-p", "#{@csm_session}") or "sidebar")
+    assert order == ["a", "b", "sidebar"]

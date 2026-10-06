@@ -68,8 +68,8 @@ HELP = """\
 [b]Open[/b]
   enter     beside this list in tmux, else here (back to the list when claude exits).
             A session already open in a Ghostty tab or Claude desktop is shown there.
-  ctrl+\\    switch focus between this list and the session beside it (tmux),
-            or the preview when no session is open
+  ctrl+\\    cycle focus: this list, then the sessions beside it top to bottom (tmux);
+            with none open, switch between this list and the preview
   n / N     new session in the highlighted project / in a new worktree
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it

@@ -31,7 +31,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | --- | --- |
 | `↑↓` / `j k`, `[ ]` | move; jump to the previous/next project |
 | `enter` | open the session (beside the list in tmux, else in this terminal), or collapse/expand a project header |
-| `ctrl+\` | (tmux) switch focus between the list and the session |
+| `ctrl+\` | (tmux) cycle focus: the list, then the sessions beside it top to bottom; with none open, the list and the preview |
 | `R` | (tmux) reply to the highlighted session without opening it: types your text and Enter into its pane |
 | `\|` | (tmux) show the highlighted session as a second pane below the current one; `enter` on any session goes back to one |
 | `c` | (tmux) stop the session's claude process |
