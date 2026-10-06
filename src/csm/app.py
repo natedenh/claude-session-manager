@@ -24,6 +24,7 @@ from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from . import data, desktop, export, ghostty, launch, notify, prs, tmux
+from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session
 from .launch import Launch, Pending
@@ -190,6 +191,7 @@ class CSM(App[Session | None]):
     #transcript { height: 1fr; }
     * { scrollbar-background: $background; scrollbar-background-hover: $background;
         scrollbar-background-active: $background; }
+    #activity { height: 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
     Prompt, Confirm, Help { align: center middle; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
@@ -268,6 +270,7 @@ class CSM(App[Session | None]):
                 yield Static(id="meta")
                 with VerticalScroll(id="transcript"):
                     yield Static(id="messages")
+        yield Activity(id="activity")
         yield Static("Loading sessions…", id="status")
         yield Footer()
 
@@ -485,6 +488,7 @@ class CSM(App[Session | None]):
         self.update_status(len(visible))
 
     def update_status(self, count: int) -> None:
+        self.query_one(Activity).set_busy(sum(1 for v in self.live.values() if v.status != "idle"))
         parts = [f"{count} sessions", f"{len(self.live)} live"]
         if self.waiting:
             parts.append(f"{len(self.waiting)} waiting")
