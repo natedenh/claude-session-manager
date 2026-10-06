@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import os
 import signal
 import subprocess
@@ -331,6 +332,7 @@ class CSM(App[Session | None]):
         self.digests = summary.Digests(self.paths.summaries)
         self.said: dict[tuple[str, float], str | None] = {}  # (id, mtime) -> end of last assistant message
         self.pulse_on = True
+        self.same_name: set[str] = set()  # titles shared by more than one listed session
         self.row_args: dict[str, bool] = {}  # session id -> with_project, to redraw a row in place
         self.focus_id = focus_id
         self.state = data.State(self.paths.state)
@@ -554,9 +556,19 @@ class CSM(App[Session | None]):
         dot = self.marker(s, live, style)
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting or s.id in self.permission else ""
-        fork = Text(" ⑃", style="dim") if s.forked_from else Text()
+        fork = self.fork_tag(s)
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         return Text.assemble(mark, dot, icon, (s.title, title), fork, context_flag(s), tags, project)
+
+    def fork_tag(self, s: Session) -> Text:
+        """Forks copy their original's title; when both are listed, say which is which."""
+        if s.title in self.same_name:
+            label = "⑃ fork" if s.forked_from else "original" if self.is_parent(s) else "same name"
+            return Text(f"  {label} · {ago(s.mtime)}", style="dim")
+        return Text(" ⑃", style="dim") if s.forked_from else Text()
+
+    def is_parent(self, s: Session) -> bool:
+        return any(x.forked_from == s.id for x in self.sessions)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id in self.shown_ids:
@@ -584,6 +596,8 @@ class CSM(App[Session | None]):
         keep = f"s:{self.focus_id}" if self.focus_id else current
         self.focus_id = None
         visible = self.visible()
+        titles = Counter(s.title for s in visible)
+        self.same_name = {t for t, n in titles.items() if n > 1}
         pending = self.pending_groups()
         pinned = [s for s in visible if s.id in self.state.pinned]
         rest = [s for s in visible if s.id not in self.state.pinned]

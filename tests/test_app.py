@@ -509,3 +509,18 @@ async def test_archived_session_reappears_while_working(sessions):
         app.rebuild()
         assert "s:b1" not in ids(app)
     assert data.State(sessions.state).archived == {"b1"}
+
+
+async def test_same_named_fork_and_original_are_labelled(paths, write, tmp_path):
+    repo = str(tmp_path / "repo")
+    lines = [rec(type="user", uuid="u1", sessionId="orig", cwd=repo, message={"content": "hi"}),
+             rec(type="custom-title", customTitle="Same title")]
+    write(repo, "orig", *lines)
+    write(repo, "fork", *lines)  # copied records still name the original
+    write(repo, "solo", user("hi", repo), rec(type="custom-title", customTitle="Unique"))
+    app = CSM(paths)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        prompt = lambda sid: app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
+        assert "⑃ fork ·" in prompt("fork") and "original ·" in prompt("orig")
+        assert "fork" not in prompt("solo") and "original" not in prompt("solo")
