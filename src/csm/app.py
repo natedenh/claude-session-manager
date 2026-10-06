@@ -83,6 +83,7 @@ HELP = """\
 [b]Manage[/b]
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
+  X         retire: stop it (csm pane or background job) and archive (marked, or highlighted)
   A         auto-archive rule (merged PRs, idle sessions); x keeps an auto-archived one
   E         export to Markdown (marked, or highlighted)
   #         edit tags (#waiting-on-chris; marked sessions get them added)
@@ -281,6 +282,7 @@ class CSM(App[Session | None]):
         Binding("slash", "filter", "Filter"),
         Binding("s", "search", "Search"),
         Binding("c", "close_session", "Close", show=False),
+        Binding("X", "retire", "Retire", show=False),
         Binding("o", "open('tab')", "New tab", show=False),
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
@@ -1127,6 +1129,57 @@ class CSM(App[Session | None]):
             self.push_screen(Confirm(f"“{s.title}” is {live.status}. Stop it?"), done)
         else:
             done(True)
+
+    def retire_plan(self, targets: list[Session]) -> tuple[set[str], set[str], dict[str, int], list[str]]:
+        """(ids to archive, csm panes to close by session id, background jobs to stop {id: pid},
+        sessions left running elsewhere). A background job and the terminal attached to it go together."""
+        ids = {s.id for s in targets}
+        ids |= {self.viewers[i] for i in ids if i in self.viewers} | {bg for i in ids if (bg := self.viewing(i))}
+        panes = {i for i in ids if self.host and i in self.hosted}
+        jobs = {i: self.live[i].pid for i in ids if i in self.live and self.live[i].kind == "bg"}
+        attached = set(self.viewers.values())
+        elsewhere = [i for i in ids if i in self.live and i not in panes and i not in jobs and i not in attached]
+        return ids, panes, jobs, elsewhere
+
+    def action_retire(self) -> None:
+        if not (targets := self.targets()):
+            return
+        ids, panes, jobs, elsewhere = self.retire_plan(targets)
+        what = f"“{targets[0].title}”" if len(targets) == 1 else f"{len(targets)} sessions"
+        steps = []
+        if jobs:
+            steps.append("stop background job" + "s" * (len(jobs) > 1) + " (pid " + ", ".join(map(str, sorted(jobs.values()))) + ")")
+        if panes:
+            steps.append(f"close {len(panes)} csm pane" + "s" * (len(panes) > 1))
+        steps.append("archive " + ("it" if len(ids) == 1 else f"{len(ids)} sessions"))
+        busy = [i for i in ids if (l := self.live.get(i)) and l.status != "idle"]
+        msg = f"Retire {what}? This will {', '.join(steps)}."
+        if busy:
+            msg += f"\n{len(busy)} still working; that work stops too."
+        if elsewhere:
+            msg += f"\n{len(elsewhere)} running outside csm (Ghostty, desktop…) keep running; archived only."
+
+        def done(yes: bool) -> None:
+            if not yes:
+                return
+            for i in panes:
+                try:
+                    self.host.close(i)
+                except subprocess.CalledProcessError:
+                    pass
+            for pid in jobs.values():
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            self.state.archived |= ids
+            self.state.save()
+            self.marked.clear()
+            if self.host:
+                self.poll_host()
+            self.notify(f"Retired {what}", timeout=2)
+            self.rebuild()
+        self.push_screen(Confirm(msg), done)
 
     async def action_quit(self) -> None:
         if self.host and self.host.own:

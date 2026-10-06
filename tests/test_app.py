@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import subprocess
 
 import pytest
@@ -572,3 +573,39 @@ async def test_pane_attached_to_background_job_counts_as_showing_the_job(session
         await pilot.press("enter")  # b1, the job: bring up the pane showing it, not a second resume
         await settle(pilot)
         assert host.calls[-1][:2] == ("show", "a2")
+
+
+async def test_retire_stops_background_job_closes_its_pane_and_archives_both(sessions, monkeypatch):
+    real_kill, killed = os.kill, []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: real_kill(pid, sig) if sig == 0 else killed.append((pid, sig)))
+    for n, d in enumerate([{"sessionId": "a2", "kind": "interactive", "parkedJobId": "j1", "tmux": "csm:@0.%3"},
+                           {"sessionId": "b1", "kind": "bg", "jobId": "j1"}]):
+        (sessions.live / f"{n}.json").write_text(json.dumps({"pid": os.getpid(), "status": "idle", **d}))
+    host = FakeHost()
+    host.panes, host.also = {"a2": "%3"}, ["a2"]
+    app = CSM(sessions, host=host)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("X")  # b1, the background job
+        assert "stop background job (pid" in app.screen.message and "close 1 csm pane" in app.screen.message
+        await pilot.press("n")
+        assert not killed and ("close", "a2") not in host.calls
+        await pilot.press("X", "y")
+        await settle(pilot)
+        assert killed == [(os.getpid(), signal.SIGTERM)] and ("close", "a2") in host.calls
+        assert data.State(sessions.state).archived == {"b1", "a2"}
+
+
+async def test_retire_only_archives_sessions_running_outside_csm(sessions, monkeypatch):
+    real_kill, killed = os.kill, []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: real_kill(pid, sig) if sig == 0 else killed.append((pid, sig)))
+    (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle",
+                                                       "kind": "interactive"}))
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("X")
+        assert "keep running; archived only" in app.screen.message
+        await pilot.press("y")
+        await settle(pilot)
+        assert not killed and data.State(sessions.state).archived == {"b1"}
