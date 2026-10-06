@@ -45,39 +45,37 @@ def default_theme() -> str:
 
 HELP = """\
 [b]Navigate[/b]
-  ↑/↓ j/k      move              [ ]      previous / next project
-  enter        resume session, or collapse/expand a project
-  e            show every session in every project
-  v            flat list of all sessions / grouped by project
+  ↑↓ j k    move                          [ ]       previous / next project
+  enter     open a session; on a project header, collapse / expand it
+  e         show every session (5 per project otherwise)
+  v         flat newest-first list / grouped by project
 
 [b]Find[/b]
-  /            filter by title, project or branch (as you type)
-  s            search transcript text (press enter to run)
-  esc          clear the filter and search
-  p  w  l  !   only PR-linked / worktree / live / waiting-for-you sessions
-  a            also show archived sessions (archived in csm or Claude desktop)
+  /         filter by title, project or branch as you type
+  s         search transcript text (enter runs it)
+  esc       clear the filter, search and marks
+  p w l !   only PR-linked / worktree / live / waiting-for-you sessions
+  a         also show archived sessions (archived in csm or Claude desktop)
 
-[b]Act[/b]
-  enter        open the session: beside this list when running in tmux, otherwise
-               here (you come back to this list when claude exits). A session
-               already open in a Ghostty tab or Claude desktop is shown there instead.
-  ctrl+\\       (tmux) switch between this list and the session
-  c            (tmux) close the session's claude process
-  o / O        resume in a new Ghostty tab / window
-  n / N        new session / new session in a worktree, in the highlighted project
-  f            fork the highlighted session into a new one
-  r            rename                   x        archive / unarchive
-  y            copy session id          d        move transcript to the Trash
-  $            costs: totals, by project, by week, top sessions
-  *            pin / unpin (pinned sessions sit at the top)
-  space        mark / unmark; x and d then act on every marked session, esc clears
-  ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
+[b]Open[/b]
+  enter     beside this list in tmux, otherwise here (back to the list when claude exits).
+            A session already open in a Ghostty tab or Claude desktop is shown there.
+  ctrl+\\    (tmux) switch focus between this list and the session
+  n / N     new session in the highlighted project / in a new worktree
+  f         fork the highlighted session
+  o / O     resume in a new Ghostty tab / window
+  c         (tmux) stop the session's claude process
+
+[b]Manage[/b]
+  r         rename                        y         copy session id
+  x         archive / unarchive           d         move transcript to the Trash
+  *         pin / unpin                   space     mark; x and d act on all marked
+  $         costs                         ctrl+r    reload
+  q         quit (in tmux: detach; sessions keep running)
 
 [b]Icons[/b]
-  [green]⇄[/] PR linked (colored by status: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed/draft[/])
-  [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
-  ◆ waiting for you (finished its turn)
+  [green]⇄[/] PR linked: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
+  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list   ◆ waiting for you
 """
 
 
@@ -183,7 +181,7 @@ class CSM(App[Session | None]):
     #search { margin: 0 1; border-title-color: $accent; }
     #body { height: 1fr; }
     #list { width: 38%; min-width: 34; max-width: 72; border: none; padding: 0; }
-    #list > .option-list--option { text-wrap: nowrap; text-overflow: ellipsis; }
+    #list { text-wrap: nowrap; text-overflow: ellipsis; }
     #right { border-left: solid $foreground 30%; padding: 0 1 0 2; }
     #meta { height: auto; }
     #transcript { height: 1fr; }
@@ -193,27 +191,27 @@ class CSM(App[Session | None]):
     Prompt, Confirm, Help { align: center middle; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
     .dialog Input { margin-top: 1; }
-    Help .dialog { width: 84; }
+    Help .dialog { width: 96; max-height: 90%; overflow-y: auto; }
     Screen.-narrow #right { display: none; }
     Screen.-narrow #list { width: 1fr; max-width: 100%; }
     """
     BINDINGS = [
         Binding("slash", "filter", "Filter"),
-        Binding("s", "search", "Search text"),
+        Binding("s", "search", "Search"),
         Binding("c", "close_session", "Close", show=False),
-        Binding("o", "open('tab')", "New tab"),
+        Binding("o", "open('tab')", "New tab", show=False),
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
         Binding("N", "new(True)", "New in worktree", show=False),
         Binding("f", "fork", "Fork", show=False),
-        Binding("r", "rename", "Rename"),
-        Binding("x", "archive", "Archive"),
+        Binding("r", "rename", "Rename", show=False),
+        Binding("x", "archive", "Archive", show=False),
         Binding("asterisk", "pin", "Pin"),
         Binding("space", "mark", "Mark", show=False),
-        Binding("v", "toggle_flat", "Flat/Grouped"),
-        Binding("p", "toggle('pr')", "PRs"),
-        Binding("w", "toggle('worktree')", "Worktrees"),
-        Binding("l", "toggle('live')", "Live"),
+        Binding("v", "toggle_flat", "Flat"),
+        Binding("p", "toggle('pr')", "PRs", show=False),
+        Binding("w", "toggle('worktree')", "Worktrees", show=False),
+        Binding("l", "toggle('live')", "Live", show=False),
         Binding("exclamation_mark", "toggle('waiting')", "Waiting"),
         Binding("a", "toggle('archived')", "Archived"),
         Binding("e", "expand_all", "Expand", show=False),
