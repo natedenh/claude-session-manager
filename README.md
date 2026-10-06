@@ -46,6 +46,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
+| `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
 | `esc` | clear the filter, search and marks |
 | `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
 | `?` | help |
@@ -63,6 +64,8 @@ For sessions linked to a pull request, csm asks `gh pr view` for its state, chec
 - **Parse cache:** `~/.cache/csm/index.json`, keyed on file mtime and size. The first run parses everything; after that only changed files are re-read.
 - **csm's own state:** archived ids and collapsed projects, in `~/.local/state/csm/state.json`.
 - **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`. csm never changes the desktop app's archive.
+
+- **Exports:** `E` writes `<date> <title>.md` (front matter, then the whole conversation) to `~/Downloads/claude-sessions/`. Change the folder with `--export-dir` or `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
 
 Only rename and delete touch Claude's files. Rename appends one record to the transcript; delete moves the transcript to the Trash.
 

@@ -23,7 +23,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, ghostty, launch, notify, prs, tmux
+from . import data, desktop, export, ghostty, launch, notify, prs, tmux
 from .costs import Costs
 from .data import LiveSession, Message, Session
 from .launch import Launch, Pending
@@ -69,6 +69,7 @@ HELP = """\
 [b]Manage[/b]
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
+  E         export to Markdown (marked, or highlighted)
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
@@ -217,6 +218,7 @@ class CSM(App[Session | None]):
         Binding("e", "expand_all", "Expand", show=False),
         Binding("y", "copy_id", "Copy id", show=False),
         Binding("d", "trash", "Delete", show=False),
+        Binding("E", "export", "Export", show=False),
         Binding("right_square_bracket", "jump(1)", "Next project", show=False),
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
@@ -859,6 +861,22 @@ class CSM(App[Session | None]):
         marked = [s for s in self.by_id.values() if s.id in self.marked]
         return marked or ([s] if (s := self.selected()) else [])
 
+    def action_export(self) -> None:
+        if targets := self.targets():
+            self.notify("Exporting…", timeout=2)
+            self.run_export(targets)
+
+    @work(thread=True, group="export")
+    def run_export(self, targets: list[Session]) -> None:
+        try:
+            files = [export.export(s, self.paths.export) for s in targets]
+        except OSError as e:
+            self.call_from_thread(self.notify, f"Export failed: {e}", severity="error")
+            return
+        what = tilde(str(files[0])) if len(files) == 1 else f"{len(files)} files in {tilde(str(self.paths.export))}"
+        self.call_from_thread(self.notify, f"Exported to {what}", timeout=4)
+        export.reveal(files)
+
     def action_archive(self) -> None:
         targets = self.targets()
         if not targets:
@@ -913,10 +931,14 @@ def main() -> None:
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
     ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
     ap.add_argument("--no-notify", action="store_true", help="don't send a desktop notification when a session is waiting")
+    ap.add_argument("--export-dir", help="where E writes Markdown exports; default ~/Downloads/claude-sessions. "
+                                         "Also CSM_EXPORT_DIR.")
     ap.add_argument("--theme", help="Textual theme; default ansi-light or ansi-dark (follows macOS), "
                                     "which use the terminal's own colors and background. Also CSM_THEME.")
     ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.export_dir:
+        os.environ["CSM_EXPORT_DIR"] = os.path.abspath(os.path.expanduser(args.export_dir))
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
         host = tmux.Tmux(own=args.sidebar)
         host.mark_sidebar()
@@ -924,6 +946,7 @@ def main() -> None:
         return
     if not args.no_tmux and tmux.available():
         extra = (["--archived"] if args.archived else []) + (["--no-notify"] if args.no_notify else []) + (["--theme", args.theme] if args.theme else [])
+        extra += ["--export-dir", os.environ["CSM_EXPORT_DIR"]] if args.export_dir else []
         tmux.launch(extra)  # does not return
     focus = None
     while True:

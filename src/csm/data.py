@@ -32,6 +32,7 @@ class Paths:
     prs: Path = field(default_factory=lambda: Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "csm" / "prs.json")
     state: Path = field(default_factory=lambda: Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "csm" / "state.json")
     trash: Path = HOME / ".Trash"
+    export: Path = field(default_factory=lambda: Path(os.environ.get("CSM_EXPORT_DIR") or HOME / "Downloads" / "claude-sessions"))
     # Claude desktop's data dirs ("Claude", "Claude-3p", …) live here.
     desktop: Path = HOME / "Library" / "Application Support"
 
