@@ -423,10 +423,37 @@ class State:
         self.collapsed: set[str] = set(d.get("collapsed", []))
         self.pinned: set[str] = set(d.get("pinned", []))
         self.flat: bool = bool(d.get("flat", False))
+        self.tags: dict[str, list[str]] = {k: normalize_tags(v) for k, v in (d.get("tags") or {}).items()
+                                           if isinstance(v, list)}
+        self.notes: dict[str, str] = {k: v for k, v in (d.get("notes") or {}).items() if isinstance(v, str) and v}
+
+    def set_tags(self, sid: str, tags: list[str]) -> None:
+        if tags:
+            self.tags[sid] = tags
+        else:
+            self.tags.pop(sid, None)
+
+    def set_note(self, sid: str, note: str) -> None:
+        if note.strip():
+            self.notes[sid] = note.strip()
+        else:
+            self.notes.pop(sid, None)
 
     def save(self) -> None:
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
-                                "pinned": sorted(self.pinned), "flat": self.flat})
+                                "pinned": sorted(self.pinned), "flat": self.flat,
+                                "tags": self.tags, "notes": self.notes})
+
+
+def normalize_tags(raw: str | list[str]) -> list[str]:
+    """Lowercase `[a-z0-9-_]` words, without `#` or duplicates, in first-seen order."""
+    words = re.split(r"[\s,]+", raw) if isinstance(raw, str) else [w for x in raw if isinstance(x, str) for w in x.split()]
+    out: list[str] = []
+    for w in words:
+        w = re.sub(r"[^a-z0-9_-]", "", w.lower())
+        if w and w not in out:
+            out.append(w)
+    return out
 
 
 def _write_json(path: Path, obj) -> None:

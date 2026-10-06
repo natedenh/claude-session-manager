@@ -26,7 +26,7 @@ from textual.worker import get_current_worker
 from . import data, desktop, export, ghostty, launch, notify, prs, tmux
 from .activity import Activity
 from .costs import Costs
-from .data import LiveSession, Message, Session
+from .data import LiveSession, Message, Session, normalize_tags
 from .launch import Launch, Pending
 from .worktrees import Worktrees
 
@@ -53,7 +53,7 @@ HELP = """\
   v         flat newest-first list / grouped by project
 
 [b]Find[/b]
-  /         filter by title, project or branch as you type
+  /         filter by title, project, branch or note as you type; #tag matches tags
   s         search transcript text (enter runs it)
   esc       clear the filter, search and marks
   p w l !   only PR-linked / worktree / live / waiting-for-you sessions
@@ -72,6 +72,8 @@ HELP = """\
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
   E         export to Markdown (marked, or highlighted)
+  #         edit tags (#waiting-on-chris; marked sessions get them added)
+  i         edit a note; both show in the preview and are searched by /  (#tag)
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
   ctrl+r    reload
@@ -130,9 +132,9 @@ class SessionList(OptionList):
 class Prompt(ModalScreen[str | None]):
     BINDINGS = [Binding("escape", "cancel", show=False)]
 
-    def __init__(self, title: str, value: str = ""):
+    def __init__(self, title: str, value: str = "", allow_empty: bool = False):
         super().__init__()
-        self.title_text, self.value = title, value
+        self.title_text, self.value, self.allow_empty = title, value, allow_empty
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
@@ -141,7 +143,8 @@ class Prompt(ModalScreen[str | None]):
 
     @on(Input.Submitted)
     def submit(self, event: Input.Submitted) -> None:
-        self.dismiss(event.value.strip() or None)
+        text = event.value.strip()
+        self.dismiss(text if text or self.allow_empty else None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -210,6 +213,8 @@ class CSM(App[Session | None]):
         Binding("N", "new(True)", "New in worktree", show=False),
         Binding("f", "fork", "Fork", show=False),
         Binding("r", "rename", "Rename", show=False),
+        Binding("number_sign", "tag", "Tags", show=False),
+        Binding("i", "note", "Note", show=False),
         Binding("x", "archive", "Archive", show=False),
         Binding("asterisk", "pin", "Pin"),
         Binding("space", "mark", "Mark", show=False),
@@ -378,8 +383,10 @@ class CSM(App[Session | None]):
                 continue
             if self.hits is not None and s.id not in self.hits:
                 continue
-            haystack = f"{s.project_name} {s.title} {s.branch or ''}".lower()
-            if any(t not in haystack for t in tokens):
+            haystack = f"{s.project_name} {s.title} {s.branch or ''} {self.state.notes.get(s.id, '')}".lower()
+            tags = self.state.tags.get(s.id, [])
+            if any(not any(g.startswith(t[1:]) for g in tags) if t.startswith("#") else t not in haystack
+                   for t in tokens):
                 continue
             out.append(s)
         return out
@@ -410,20 +417,21 @@ class CSM(App[Session | None]):
         dot = "▶ " if p.id == self.shown_id else "● "
         return Text.assemble((dot, "cyan"), ("○ ", "dim"), (p.launch.label, "italic"))
 
-    def tags(self, s: Session, with_project: bool) -> tuple[Text, Text]:
+    def columns(self, s: Session, with_project: bool) -> tuple[Text, Text]:
         """Leading mark column (only while something is marked) and trailing project name."""
         mark = Text("✓ " if s.id in self.marked else "  ", style="bold green") if self.marked else Text()
         return mark, Text(f"  {s.project_name}", style="dim") if with_project else Text()
 
     def row(self, s: Session, with_project: bool = False) -> Text:
-        mark, project = self.tags(s, with_project)
+        mark, project = self.columns(s, with_project)
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = self.marker(s, live, style)
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
         fork = Text(" ⑃", style="dim") if s.forked_from else Text()
-        return Text.assemble(mark, dot, icon, (s.title, title), fork, project)
+        tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
+        return Text.assemble(mark, dot, icon, (s.title, title), fork, tags, project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id == self.shown_id:
@@ -566,6 +574,10 @@ class CSM(App[Session | None]):
             st = self.pr_status.get(s.pr_url)
             lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
                                        pr_summary(st) + "  " if st else "", (s.pr_url, "dim")))
+        if tags := self.state.tags.get(s.id):
+            lines.append(Text(" ".join(f"#{t}" for t in tags), style="cyan"))
+        if note := self.state.notes.get(s.id):
+            lines.append(Text.assemble(("note: ", "dim"), note))
         if by := self.archived_by(s):
             lines.append(Text(f"archived in {by}", style="italic yellow"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
@@ -846,6 +858,41 @@ class CSM(App[Session | None]):
                 self.rebuild()
                 self.show(s)
         self.push_screen(Prompt("Rename session", s.title), done)
+
+    def action_tag(self) -> None:
+        if not (targets := self.targets()):
+            return
+        many = len(targets) > 1
+        current = "" if many else " ".join(f"#{t}" for t in self.state.tags.get(targets[0].id, []))
+        title = f"Add tags to {len(targets)} sessions (#tag #other)" if many else "Tags (#tag #other)"
+
+        def done(text: str | None) -> None:
+            if text is None:
+                return
+            new = normalize_tags(text)
+            for s in targets:
+                self.state.set_tags(s.id, normalize_tags(self.state.tags.get(s.id, []) + new) if many else new)
+            self.state.save()
+            self.refresh_tagged(targets)
+        self.push_screen(Prompt(title, current, allow_empty=not many), done)
+
+    def action_note(self) -> None:
+        if not (s := self.selected()):
+            return
+
+        def done(text: str | None) -> None:
+            if text is None:
+                return
+            self.state.set_note(s.id, text)
+            self.state.save()
+            self.refresh_tagged([s])
+        self.push_screen(Prompt("Note (empty removes it)", self.state.notes.get(s.id, ""), allow_empty=True), done)
+
+    def refresh_tagged(self, targets: list[Session]) -> None:
+        self.focus_id = targets[0].id
+        self.rebuild()
+        if (cur := self.selected()) and cur.id in {s.id for s in targets}:
+            self.show(cur)
 
     def action_pin(self) -> None:
         if not (s := self.selected()):
