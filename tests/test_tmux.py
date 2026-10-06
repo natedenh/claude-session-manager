@@ -92,3 +92,14 @@ def test_show_also_splits_and_show_collapses(server):
 def test_show_also_with_nothing_shown_is_plain_show(server):
     server.show_also("a", "/tmp", "sleep 600")
     assert server.shown_all() == ["a"]
+
+
+def test_launch_reloads_config_on_a_running_server(server, monkeypatch):
+    from csm import tmux
+    monkeypatch.setattr(tmux, "SOCKET", server.base[2])
+    monkeypatch.setattr(tmux, "sidebar_command", lambda extra: "sleep 600")
+    monkeypatch.setattr(tmux.os, "execvp", lambda *a: (_ for _ in ()).throw(SystemExit))
+    server.run("unbind-key", "-n", "C-\\")
+    with pytest.raises(SystemExit):
+        tmux.launch([])
+    assert "select-pane -R" in server.run("list-keys", "-T", "root")

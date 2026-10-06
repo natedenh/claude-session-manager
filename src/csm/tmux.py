@@ -35,6 +35,7 @@ def launch(extra: list[str]) -> None:
     cmd = sidebar_command(extra)
     if subprocess.run([*base, "has-session", "-t", SESSION], capture_output=True).returncode == 0:
         t = Tmux(base)
+        t.run("source-file", str(CONF))  # -f only applies when the server starts
         sidebar = next((p for p in t.panes() if p.sidebar), None)
         if sidebar:
             # Restart the sidebar so an updated csm takes effect; sessions are separate panes
