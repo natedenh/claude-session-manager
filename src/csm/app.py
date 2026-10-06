@@ -96,7 +96,7 @@ HELP = """\
 
 [b]Icons[/b]
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [warn]●[/] live, busy   ▶ shown beside the list
+  [green]●[/] live, idle   [warn]●[/] live, busy   » shown beside the list
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
   bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
@@ -561,7 +561,7 @@ class CSM(App[Session | None]):
         return out if not self.narrowed else {}
 
     def pending_row(self, p: Pending) -> Text:
-        dot = "▶ " if p.id in self.shown_ids else "● "
+        dot = "» " if p.id in self.shown_ids else "● "
         return Text.assemble((dot, "cyan"), ("○ ", "dim"), (p.launch.label, "italic"))
 
     def columns(self, s: Session, with_project: bool) -> tuple[Text, Text]:
@@ -595,7 +595,7 @@ class CSM(App[Session | None]):
         if self.viewing(s.id):  # only a window onto a background job; that job's row carries the state
             return "⇢ ", "dim"
         if self.displayed(s.id):
-            return "▶ ", style
+            return "» ", style
         if s.id in self.permission:
             return "? ", "bold red"
         if s.id in self.waiting:

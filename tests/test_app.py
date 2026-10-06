@@ -220,7 +220,7 @@ async def test_host_mode_shows_beside_list_and_detaches(sessions):
         await pilot.press("enter")
         await settle(pilot)
         assert host.calls[0][:2] == ("show", "b1") and host.calls[0][2].endswith("-r b1")
-        assert app.shown_id == "b1" and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("▶")
+        assert app.shown_id == "b1" and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("»")
         await pilot.press("c")
         await settle(pilot)
         assert ("close", "b1") in host.calls and app.shown_id is None
@@ -302,7 +302,7 @@ async def test_new_host_mode_shows_pending_row_until_pane_gone(sessions, tmp_pat
         await settle(pilot)
         [(_, sid, command)] = host.calls
         assert command.endswith(f"--session-id {sid}") and host.cwds[sid] == str(tmp_path / "beta")
-        assert f"s:{sid}" in ids(app) and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("▶")
+        assert f"s:{sid}" in ids(app) and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("»")
         assert "New session" in app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
         await pilot.press("enter")  # shows it again rather than resuming
         await settle(pilot)
@@ -470,7 +470,7 @@ async def test_side_by_side_marks_both_sessions(sessions):
         await settle(pilot)
         assert [c[0] for c in host.calls] == ["show", "show_also"] and len(app.shown_ids) == 2
         lst = app.query_one(SessionList)
-        marked = [o.id for o in lst.options if str(o.prompt).lstrip().startswith("▶")]
+        marked = [o.id for o in lst.options if str(o.prompt).lstrip().startswith("»")]
         assert first in marked and len(marked) == 2
 
 
@@ -566,7 +566,7 @@ async def test_pane_attached_to_background_job_counts_as_showing_the_job(session
         await settle(pilot)
         app.poll_live()
         await pilot.pause()
-        assert row_text(app, "b1").startswith("▶") and "bg" in row_text(app, "b1")
+        assert row_text(app, "b1").startswith("»") and "bg" in row_text(app, "b1")
         assert row_text(app, "a2").startswith("⇢")
         meta = [getattr(r, "plain", "") for r in app.meta(app.by_id["b1"]).renderables]
         assert "idle in the background" in " ".join(meta) and "  attached in tmux pane %3" in meta
