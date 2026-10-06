@@ -44,6 +44,9 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `f` | fork the highlighted session (`--fork-session`), named "<title> (fork)" |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
+| `g` | open the session's PR in the browser |
+| `.` | open the project directory in your editor: `$CSM_EDITOR`, else `code`, else `cursor`, else Finder |
+| `D` | open the session in Claude desktop, even if it isn't running there (needs the app to know the session) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |

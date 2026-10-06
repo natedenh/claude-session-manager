@@ -23,7 +23,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, export, ghostty, launch, notify, prs, tmux
+from . import data, desktop, export, ghostty, launch, links, notify, prs, tmux
 from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session
@@ -67,6 +67,9 @@ HELP = """\
   f         fork the highlighted session
   o / O     resume in a new Ghostty tab / window
   c         (tmux) stop the session's claude process
+  g         open the session's PR in the browser
+  .         open the project directory in your editor ($CSM_EDITOR, code, cursor, else Finder)
+  D         open the session in Claude desktop, even if it isn't running there
 
 [b]Manage[/b]
   r         rename                        y         copy session id
@@ -223,6 +226,9 @@ class CSM(App[Session | None]):
         Binding("y", "copy_id", "Copy id", show=False),
         Binding("d", "trash", "Delete", show=False),
         Binding("E", "export", "Export", show=False),
+        Binding("g", "open_pr", "Open PR", show=False),
+        Binding("full_stop", "open_editor", "Open in editor", show=False),
+        Binding("D", "open_desktop", "Open in Claude desktop", show=False),
         Binding("right_square_bracket", "jump(1)", "Next project", show=False),
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
@@ -907,6 +913,39 @@ class CSM(App[Session | None]):
         self.notify(f"{'Archived' if archiving else 'Unarchived'} {what}", timeout=2)
         self.marked.clear()
         self.rebuild()
+
+    def launch_external(self, fn, *args) -> bool:
+        try:
+            fn(*args)
+            return True
+        except OSError as e:
+            self.notify(f"Couldn't open: {e}", severity="error")
+            return False
+
+    def action_open_pr(self) -> None:
+        if not (s := self.selected()):
+            return
+        if not s.pr_url:
+            self.notify("This session has no PR", severity="warning")
+        elif self.launch_external(links.open_url, s.pr_url):
+            self.notify("Opened PR in browser", timeout=2)
+
+    def action_open_editor(self) -> None:
+        s = self.selected()
+        path = s.project if s else self.current_project()
+        if not path or not os.path.isdir(path):
+            self.notify("No project directory to open", severity="warning")
+        else:
+            self.launch_external(links.open_editor, path)
+
+    def action_open_desktop(self) -> None:
+        if not (s := self.selected()):
+            return
+        rec = self.desktop.get(s.id)
+        if not rec or not desktop.SESSION_ID.match(rec.local_id):
+            self.notify("Claude desktop doesn't know this session", severity="warning")
+        elif self.launch_external(desktop.open_id, rec.local_id):
+            self.notify("Opened in Claude desktop", timeout=2)
 
     def action_copy_id(self) -> None:
         if not (s := self.selected()):

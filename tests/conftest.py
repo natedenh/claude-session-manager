@@ -79,3 +79,12 @@ def no_real_finder(monkeypatch):
     revealed = []
     monkeypatch.setattr(export, "reveal", revealed.append)
     return revealed
+
+
+@pytest.fixture(autouse=True)
+def launched(monkeypatch):
+    """Never open a browser, editor, Finder or the desktop app; commands are recorded here."""
+    from csm import links
+    out = []
+    monkeypatch.setattr(links, "run", out.append)
+    return out
