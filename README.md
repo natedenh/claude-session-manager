@@ -52,6 +52,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
+| `t` | read the whole transcript; `/` searches, `n` / `N` step through matches, `g` / `G` top / bottom, `esc` closes search then the viewer |
 | `W` | clean up worktrees (see below) |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |

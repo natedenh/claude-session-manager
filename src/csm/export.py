@@ -24,7 +24,7 @@ def filename(s: Session) -> str:
     return f"{date} {title}.md"
 
 
-def _conversation(path: str) -> list[tuple[str, str]]:
+def conversation(path: str) -> list[tuple[str, str]]:
     """Every turn as (role, text); role is "user", "assistant" or "tools" (names, comma separated)."""
     out: list[tuple[str, str]] = []
     with open(path, errors="replace") as f:
@@ -76,7 +76,7 @@ def render(s: Session) -> str:
     blocks: list[str] = []
     tools: list[str] = []
     last = None  # role of the last section written
-    for role, text in _conversation(s.path) + [("end", "")]:
+    for role, text in conversation(s.path) + [("end", "")]:
         if role == "tools":
             tools.append(text)
             continue
