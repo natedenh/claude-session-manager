@@ -668,7 +668,7 @@ async def test_rows_open_beside_the_list_get_a_soft_background(sessions):
         assert lst.open_ids == {"s:a2", "s:a1"}
         open_bg = lst.get_visual_style("option-list--option", "session-list--open").rich_style.bgcolor
         plain_bg = lst.get_visual_style("option-list--option").rich_style.bgcolor
-        assert open_bg != plain_bg
+        assert open_bg != plain_bg and open_bg.get_truecolor().hex == "#333333"  # a fixed grey, not the accent
 
         def row_bg(sid):
             i = next(n for n, o in enumerate(lst.options) if o.id == f"s:{sid}")
@@ -691,3 +691,21 @@ async def test_project_header_shows_uncommitted_and_unpushed(sessions, monkeypat
         alpha = next(h for h in headers_text if "alpha" in h)
         assert "±3" in beta and "↑2" in beta and "↓" not in beta
         assert "±" not in alpha
+
+
+async def test_cursor_fades_when_the_list_loses_focus(sessions):
+    app = CSM(sessions)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        lst = app.query_one(SessionList)
+
+        def cursor_bg():
+            return lst.get_visual_style("option-list--option", "option-list--option-highlighted").rich_style.bgcolor
+        focused = cursor_bg()
+        app.app_focus = False  # tmux reports focus moving to the session pane
+        await pilot.pause()
+        away = cursor_bg()
+        assert away != focused and not away.is_default  # Textual's own blurred cursor has no background here
+        app.app_focus = True
+        await pilot.pause()
+        assert cursor_bg() == focused

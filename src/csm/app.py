@@ -185,7 +185,13 @@ class SessionList(OptionList):
     # Rows of sessions open beside the list get a soft background across the whole row.
     COMPONENT_CLASSES = {"session-list--open"}
     DEFAULT_CSS = """
-    SessionList > .session-list--open { background: $accent 18%; }
+    /* Fixed greys: the ansi themes' colors come from the terminal and can't be mixed into a tint. */
+    SessionList:light > .session-list--open { background: #eeeeee; }
+    SessionList:dark > .session-list--open { background: #333333; }
+    /* Away in a session pane, the cursor fades to a grey; the list's own focus keeps it solid. */
+    SessionList:blur > .option-list--option-highlighted { color: $foreground; text-style: none; }
+    SessionList:light:blur > .option-list--option-highlighted { background: #dcdcdc; }
+    SessionList:dark:blur > .option-list--option-highlighted { background: #444444; }
     """
     open_ids: set[str] = set()
 
