@@ -18,7 +18,7 @@ from typing import Callable
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 4  # bump whenever parse_session changes
+CACHE_VERSION = 5  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -66,6 +66,8 @@ class Session:
     first_uuid: str | None = None  # forks copy the history, so they share this with the original
     copied_from: str | None = None  # another session's id found in copied records
     born: float = 0.0  # file creation time
+    context_tokens: int | None = None  # size of the last main-thread turn's context
+    context_model: str | None = None
     forked_from: str | None = None  # set by load_sessions, not cached
 
     @property
@@ -116,9 +118,27 @@ def worktree_root(cwd: str) -> str:
     return repo + WORKTREE_MARK + rest.split("/")[0]
 
 
+def context_of(line: str | None) -> tuple[int | None, str | None]:
+    """(tokens in context, model) from an assistant record's usage."""
+    try:
+        d = json.loads(line) if line else {}
+        msg = d.get("message") or {}
+        u = msg.get("usage") or {}
+        total = sum(u.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens",
+                                             "cache_read_input_tokens", "output_tokens"))
+    except (ValueError, AttributeError, TypeError):
+        return None, None
+    return (total or None), msg.get("model")
+
+
+def context_window(model: str | None, tokens: int = 0) -> int:
+    """1M for `[1m]` models. Transcripts often drop the suffix, so a context already past 200k must be 1M."""
+    return 1_000_000 if "[1m]" in (model or "") or tokens > 200_000 else 200_000
+
+
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
-    first_uuid = copied_from = None
+    first_uuid = copied_from = last_usage = None
     cwds: list[str] = []  # distinct cwds, in first-seen order
     st = path.stat()
     try:
@@ -136,6 +156,9 @@ def parse_session(path: Path) -> Session | None:
                         cwds.append(cwd)
                     if m := BRANCH_RE.search(line):
                         branch = json.loads(f'"{m.group(1)}"')
+                if '"usage"' in line and '"type":"assistant"' in line and '"isSidechain":true' not in line \
+                        and '"<synthetic>"' not in line:
+                    last_usage = line  # parsed once at the end
                 # Cheap prefilter; session files can be tens of MB.
                 if not ('"custom-title"' in line or '"ai-title"' in line or '"pr-link"' in line
                         or '"cost-state"' in line or '"relocated"' in line
@@ -162,6 +185,7 @@ def parse_session(path: Path) -> Session | None:
                         first_prompt = text
     except OSError:
         return None
+    context_tokens, context_model = context_of(last_usage)
     title = custom or ai or first_prompt
     if not title:
         return None  # empty or aborted session
@@ -185,6 +209,7 @@ def parse_session(path: Path) -> Session | None:
         id=path.stem, path=str(path), title=title, project=project, cwd=cwd, branch=branch,
         pr_number=pr, pr_url=pr_url, worktree=worktree, worktrees=worktrees, cost=cost, started=started,
         mtime=st.st_mtime, size=st.st_size, first_uuid=first_uuid, copied_from=copied_from,
+        context_tokens=context_tokens, context_model=context_model,
         born=getattr(st, "st_birthtime", st.st_ctime),
     )
 

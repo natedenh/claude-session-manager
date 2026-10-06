@@ -118,6 +118,32 @@ def ago(ts: float) -> str:
     return "just now"
 
 
+def context_fraction(s: Session) -> float | None:
+    if not s.context_tokens:
+        return None
+    return s.context_tokens / data.context_window(s.context_model, s.context_tokens)
+
+
+def context_style(frac: float) -> str:
+    return "red" if frac > 0.8 else "yellow" if frac >= 0.5 else "dim"
+
+
+def context_flag(s: Session) -> Text:
+    """A small red mark after the title once the context is nearly full."""
+    frac = context_fraction(s)
+    return Text(" ◔", style="red") if frac is not None and frac > 0.8 else Text()
+
+
+def context_line(s: Session) -> Text | None:
+    frac = context_fraction(s)
+    if frac is None:
+        return None
+    window = data.context_window(s.context_model, s.context_tokens)
+    filled = min(10, int(frac * 10))
+    return Text(f"context {'▰' * filled}{'▱' * (10 - filled)} {frac:.0%} · "
+                f"{s.context_tokens // 1000}k of {window // 1000}k tokens", style=context_style(frac))
+
+
 def tilde(path: str) -> str:
     home = os.path.expanduser("~")
     return "~" + path[len(home):] if path.startswith(home) else path
@@ -429,7 +455,7 @@ class CSM(App[Session | None]):
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
         fork = Text(" ⑃", style="dim") if s.forked_from else Text()
-        return Text.assemble(mark, dot, icon, (s.title, title), fork, project)
+        return Text.assemble(mark, dot, icon, (s.title, title), fork, context_flag(s), project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id == self.shown_id:
@@ -563,6 +589,8 @@ class CSM(App[Session | None]):
         if s.cost:
             info.append(f"${s.cost:,.2f}")
         lines.append(Text("  ·  ".join(info), style="dim"))
+        if ctx := context_line(s):
+            lines.append(ctx)
         if live := self.live.get(s.id):
             lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
                                        f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
