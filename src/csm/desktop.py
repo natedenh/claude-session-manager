@@ -7,8 +7,8 @@ writes (hostSessionId), so only sessions open in the app right now can be target
 from __future__ import annotations
 
 import re
-import subprocess
 
+from . import links
 from .data import LiveSession
 
 SESSION_ID = re.compile(r"^local_[A-Za-z0-9-]{1,64}$")  # the pattern the app accepts
@@ -19,6 +19,9 @@ def can_open(live: LiveSession) -> bool:
         live.host_session_id and SESSION_ID.match(live.host_session_id))
 
 
+def open_id(local_id: str) -> None:
+    links.open_url(f"claude://code/continue?session={local_id}")
+
+
 def open_session(live: LiveSession) -> None:
-    subprocess.run(["open", f"claude://code/continue?session={live.host_session_id}"],
-                   check=True, capture_output=True)
+    open_id(live.host_session_id)

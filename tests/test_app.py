@@ -225,19 +225,17 @@ async def test_narrow_hides_preview(sessions):
         assert app.query_one("#right").display
 
 
-async def test_live_desktop_session_opens_in_desktop_app(sessions, monkeypatch):
+async def test_live_desktop_session_opens_in_desktop_app(sessions, launched):
     (sessions.live / "1.json").write_text(json.dumps({
         "pid": os.getpid(), "sessionId": "b1", "status": "idle",
         "entrypoint": "claude-desktop-3p", "hostSessionId": "local_5080e996-675e"}))
-    calls = []
-    monkeypatch.setattr("csm.desktop.subprocess.run", lambda argv, **kw: calls.append(argv))
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
         await pilot.press("enter")
         await settle(pilot)
         assert len(app.screen_stack) == 1  # no confirm dialog
-    assert calls == [["open", "claude://code/continue?session=local_5080e996-675e"]]
+    assert launched == [["open", "claude://code/continue?session=local_5080e996-675e"]]
     assert app.return_value is None
 
 
@@ -245,7 +243,7 @@ async def test_desktop_session_with_bad_id_falls_back_to_confirm(sessions, monke
     (sessions.live / "1.json").write_text(json.dumps({
         "pid": os.getpid(), "sessionId": "b1", "status": "idle",
         "entrypoint": "claude-desktop-3p", "hostSessionId": "local_x&evil=1"}))
-    monkeypatch.setattr("csm.desktop.subprocess.run", lambda *a, **k: pytest.fail("opened a URL"))
+    monkeypatch.setattr("csm.links.run", lambda *a, **k: pytest.fail("opened a URL"))
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
