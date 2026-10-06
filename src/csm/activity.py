@@ -6,7 +6,7 @@ import math
 from rich.text import Text
 from textual.widgets import Static
 
-BARS = "▁▂▃▄▅▆▇█"
+LINE = "⎽⎼─⎻⎺"  # scan lines, low to high: one thin line at five heights
 FPS = 12
 
 
@@ -15,12 +15,12 @@ def wave(width: int, phase: float) -> str:
     out = []
     for x in range(width):
         y = 0.65 * math.sin(x * 0.22 - phase) + 0.35 * math.sin(x * 0.07 + phase * 0.45)
-        out.append(BARS[min(len(BARS) - 1, int((y + 1) / 2 * len(BARS)))])
+        out.append(LINE[min(len(LINE) - 1, int((y + 1) / 2 * len(LINE)))])
     return "".join(out)
 
 
 class Activity(Static):
-    """Shows "N working" and an animated wave while sessions are busy; a flat line otherwise."""
+    """Shows "N working" and a moving wavy line while sessions are busy; a flat line otherwise."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -49,7 +49,7 @@ class Activity(Static):
     def draw(self) -> None:
         width = max(0, self.content_size.width)
         if not self.busy:
-            self.update(Text(BARS[0] * width, style="dim"))
+            self.update(Text(LINE[2] * width, style="dim"))
             return
         label = f"{self.busy} working "
-        self.update(Text.assemble((label, "bold yellow"), (wave(max(0, width - len(label)), self.phase), "yellow")))
+        self.update(Text.assemble((label, "yellow"), (wave(max(0, width - len(label)), self.phase), "dim yellow")))
