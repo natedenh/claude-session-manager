@@ -440,14 +440,28 @@ def trash(session: Session, paths: Paths) -> Path:
 
 
 class State:
-    """csm's own persisted state."""
+    """csm's own persisted state.
+
+    Other csm instances, or a tool editing the file, may change it while this one runs.
+    `save` merges: what's on disk now, plus only the changes made here since the last load.
+    """
+
+    SETS = ("archived", "collapsed", "pinned", "keep")
+    DICTS = ("auto_archive", "tags", "notes")
 
     def __init__(self, path: Path):
         self.path = path
+        self._apply(self._read())
+
+    def _read(self) -> dict:
         try:
-            d = json.loads(path.read_text())
+            self.mtime = self.path.stat().st_mtime_ns
+            return json.loads(self.path.read_text())
         except (OSError, ValueError):
-            d = {}
+            self.mtime = None
+            return {}
+
+    def _apply(self, d: dict) -> None:
         self.archived: set[str] = set(d.get("archived", []))
         self.collapsed: set[str] = set(d.get("collapsed", []))
         self.pinned: set[str] = set(d.get("pinned", []))
@@ -457,6 +471,39 @@ class State:
         self.tags: dict[str, list[str]] = {k: normalize_tags(v) for k, v in (d.get("tags") or {}).items()
                                            if isinstance(v, list)}
         self.notes: dict[str, str] = {k: v for k, v in (d.get("notes") or {}).items() if isinstance(v, str) and v}
+        self.base = self._snapshot()
+
+    def _snapshot(self) -> dict:
+        return {"archived": set(self.archived), "collapsed": set(self.collapsed), "pinned": set(self.pinned),
+                "flat": self.flat, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
+                "tags": dict(self.tags), "notes": dict(self.notes)}
+
+    def reload(self) -> bool:
+        """Pick up changes made to the file elsewhere, keeping unsaved ones made here. True if anything changed."""
+        try:
+            mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if mtime == self.mtime:
+            return False
+        before = self._snapshot()
+        self._merge()
+        return self._snapshot() != before
+
+    def _merge(self) -> None:
+        mine, base = self._snapshot(), self.base
+        self._apply(self._read())
+        for f in self.SETS:
+            setattr(self, f, (getattr(self, f) | (mine[f] - base[f])) - (base[f] - mine[f]))
+        for f in self.DICTS:
+            merged = getattr(self, f)
+            for k in mine[f].keys() | base[f].keys():
+                if k not in mine[f]:
+                    merged.pop(k, None)
+                elif mine[f][k] != base[f].get(k):
+                    merged[k] = mine[f][k]
+        if mine["flat"] != base["flat"]:
+            self.flat = mine["flat"]
 
     def set_tags(self, sid: str, tags: list[str]) -> None:
         if tags:
@@ -471,10 +518,16 @@ class State:
             self.notes.pop(sid, None)
 
     def save(self) -> None:
+        self._merge()
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
                                 "pinned": sorted(self.pinned), "flat": self.flat,
                                 "keep": sorted(self.keep), "auto_archive": self.auto_archive,
                                 "tags": self.tags, "notes": self.notes})
+        self.base = self._snapshot()
+        try:
+            self.mtime = self.path.stat().st_mtime_ns
+        except OSError:
+            self.mtime = None
 
 
 def normalize_tags(raw: str | list[str]) -> list[str]:

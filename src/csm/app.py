@@ -426,6 +426,7 @@ class CSM(App[Session | None]):
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
+        changed = self.state.reload() or changed  # archived, pinned, tags... edited elsewhere
         before = set(self.waiting), dict(self.permission)
         self.track_hooks(live)
         self.track(live)

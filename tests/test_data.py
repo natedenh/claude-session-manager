@@ -194,3 +194,30 @@ def test_unrelated_sessions_are_not_forks(paths, write, tmp_path):
     write(repo, "a", rec(type="user", uuid="u1", sessionId="a", cwd=repo, message={"content": "one"}))
     write(repo, "b", rec(type="user", uuid="u2", sessionId="b", cwd=repo, message={"content": "two"}))
     assert all(s.forked_from is None for s in data.load_sessions(paths))
+
+
+def test_state_save_keeps_changes_made_elsewhere(tmp_path):
+    f = tmp_path / "state.json"
+    mine = data.State(f)
+    mine.archived.add("a")
+    mine.save()
+    other = data.State(f)
+    other.archived |= {"b"}
+    other.set_note("a", "from elsewhere")
+    other.save()
+    mine.archived.discard("a")  # this csm unarchives a, never having seen b or the note
+    mine.pinned.add("c")
+    mine.save()
+    d = data.State(f)
+    assert d.archived == {"b"} and d.pinned == {"c"} and d.notes == {"a": "from elsewhere"}
+
+
+def test_state_reload_picks_up_outside_edits_and_keeps_unsaved(tmp_path):
+    f = tmp_path / "state.json"
+    st = data.State(f)
+    assert not st.reload()
+    st.pinned.add("p")  # not saved yet
+    f.write_text(json.dumps({"archived": ["x"], "flat": True}))
+    assert st.reload()
+    assert st.archived == {"x"} and st.flat and st.pinned == {"p"}
+    assert not st.reload()

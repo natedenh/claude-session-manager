@@ -536,3 +536,15 @@ async def test_ctrl_backslash_moves_between_list_and_preview(sessions):
         assert isinstance(app.focused, SessionList)
         await pilot.press("ctrl+backslash")
         assert app.focused.id == "transcript"
+
+
+async def test_archive_made_outside_csm_is_picked_up_and_kept(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        sessions.state.write_text(json.dumps({"archived": ["a1"]}))
+        app.poll_live()
+        await pilot.pause()
+        assert "s:a1" not in ids(app)
+        await pilot.press("asterisk")  # pinning b1 must not undo the outside archive
+        assert data.State(sessions.state).archived == {"a1"}
