@@ -54,3 +54,12 @@ def no_real_ghostty(monkeypatch):
 def fixed_theme(monkeypatch):
     """Skip the macOS appearance lookup (tests stub out subprocess.run)."""
     monkeypatch.setenv("CSM_THEME", "ansi-dark")
+
+
+@pytest.fixture(autouse=True)
+def sent(monkeypatch):
+    """Never write escape sequences to a real tty; collect what would have been sent."""
+    from csm import notify
+    out = []
+    monkeypatch.setattr(notify, "send", out.append)
+    return out

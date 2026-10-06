@@ -25,12 +25,12 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, ghostty, tmux
+from . import data, desktop, ghostty, notify, tmux
 from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
-FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live"}
+FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "waiting": "waiting"}
 MAX_MESSAGE_CHARS = 2500
 THEMES = ("ansi-light", "ansi-dark")  # Textual's themes that use the terminal's own colors
 
@@ -52,7 +52,7 @@ HELP = """\
   /            filter by title, project or branch (as you type)
   s            search transcript text (press enter to run)
   esc          clear the filter and search
-  p  w  l      only PR-linked / worktree / live sessions
+  p  w  l  !   only PR-linked / worktree / live / waiting-for-you sessions
   a            also show archived sessions (archived in csm or Claude desktop)
 
 [b]Act[/b]
@@ -69,6 +69,7 @@ HELP = """\
 [b]Icons[/b]
   [green]⇄[/] PR linked   [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
+  ◆ waiting for you (finished its turn)
 """
 
 
@@ -175,6 +176,7 @@ class CSM(App[Session | None]):
         Binding("p", "toggle('pr')", "PRs"),
         Binding("w", "toggle('worktree')", "Worktrees"),
         Binding("l", "toggle('live')", "Live"),
+        Binding("exclamation_mark", "toggle('waiting')", "Waiting"),
         Binding("a", "toggle('archived')", "Archived"),
         Binding("e", "expand_all", "Expand", show=False),
         Binding("y", "copy_id", "Copy id", show=False),
@@ -188,7 +190,8 @@ class CSM(App[Session | None]):
     ]
 
     def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None,
-                 host: tmux.Tmux | None = None, show_archived: bool = False, theme: str | None = None):
+                 host: tmux.Tmux | None = None, show_archived: bool = False, theme: str | None = None,
+                 notifications: bool = True):
         super().__init__()
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
@@ -200,6 +203,9 @@ class CSM(App[Session | None]):
         self.state = data.State(self.paths.state)
         self.sessions: list[Session] = []
         self.live: dict[str, LiveSession] = {}
+        self.notifications = notifications
+        self.waiting: set[str] = set()  # finished a turn since you last opened them; memory only
+        self.last_status: dict[str, str] | None = None
         self.filters: set[str] = {"archived"} if show_archived else set()
         self.query_text = ""
         self.mode = "filter"  # what the search box is doing: "filter" or "search"
@@ -245,6 +251,7 @@ class CSM(App[Session | None]):
                      desktop: dict[str, data.DesktopRecord]) -> None:
         changed = ([(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
                    or desktop != self.desktop)
+        self.track(live)
         self.sessions, self.live, self.desktop = sessions, live, desktop
         if changed or not self.loaded:
             self.loaded = True
@@ -253,9 +260,24 @@ class CSM(App[Session | None]):
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
-        if changed or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}:
+        before = set(self.waiting)
+        self.track(live)
+        if (changed or self.waiting != before
+                or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}):
             self.live = live
             self.rebuild()
+
+    def track(self, live: dict[str, LiveSession]) -> None:
+        """Mark sessions that went from working to idle as waiting. The first call has no history."""
+        prev, self.last_status = self.last_status, {k: v.status for k, v in live.items()}
+        self.waiting &= {k for k, v in live.items() if v.status == "idle"}
+        for sid, now in self.last_status.items():
+            if prev is None or now != "idle" or prev.get(sid, "idle") == "idle":
+                continue
+            self.waiting.add(sid)
+            if self.notifications and sid != self.shown_id:
+                title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
+                notify.send(f"{title} is waiting")
 
     def poll_host(self) -> bool:
         """Refresh which sessions run on our tmux server. Returns True if anything changed."""
@@ -286,6 +308,8 @@ class CSM(App[Session | None]):
                 continue
             if "live" in self.filters and s.id not in self.live:
                 continue
+            if "waiting" in self.filters and s.id not in self.waiting:
+                continue
             if self.hits is not None and s.id not in self.hits:
                 continue
             haystack = f"{s.project_name} {s.title} {s.branch or ''}".lower()
@@ -304,9 +328,17 @@ class CSM(App[Session | None]):
     def row(self, s: Session) -> Text:
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
-        dot = ("▶ " if s.id == self.shown_id else "● " if live else "  ", style)
+        dot = self.marker(s, live, style)
         icon = ("⇄ ", "green") if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
-        return Text.assemble(dot, icon, (s.title, "dim italic" if self.archived_by(s) else ""))
+        title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
+        return Text.assemble(dot, icon, (s.title, title))
+
+    def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
+        if s.id == self.shown_id:
+            return "▶ ", style
+        if s.id in self.waiting:
+            return "◆ ", "bold " + style
+        return ("● " if live else "  "), style
 
     def rebuild(self) -> None:
         lst = self.query_one(SessionList)
@@ -345,6 +377,8 @@ class CSM(App[Session | None]):
 
     def update_status(self, count: int) -> None:
         parts = [f"{count} sessions", f"{len(self.live)} live"]
+        if self.waiting:
+            parts.append(f"{len(self.waiting)} waiting")
         if only := sorted(self.filters - {"archived"}):
             parts.append("only " + ", ".join(FILTER_NAMES[f] for f in only))
         if "archived" in self.filters:
@@ -405,6 +439,8 @@ class CSM(App[Session | None]):
         if live := self.live.get(s.id):
             lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
                                        f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
+        if s.id in self.waiting:
+            lines.append(Text("◆ waiting for you", style="bold"))
         if s.pr_url:
             lines.append(Text.assemble(("⇄ ", "green"), (f"#{s.pr_number} ", "bold"), (s.pr_url, "dim")))
         if by := self.archived_by(s):
@@ -548,6 +584,9 @@ class CSM(App[Session | None]):
     # ---- actions on a session --------------------------------------------
 
     def resume(self, s: Session) -> None:
+        if s.id in self.waiting:
+            self.waiting.discard(s.id)
+            self.rebuild()
         self.resume_flow(s)
 
     @work(thread=True, exclusive=True, group="resume")
@@ -579,6 +618,7 @@ class CSM(App[Session | None]):
             self.call_from_thread(self.start, s)
 
     def start(self, s: Session) -> None:
+        self.waiting.discard(s.id)
         if not self.host:
             self.exit(s)
             return
@@ -692,6 +732,7 @@ def main() -> None:
                     help="don't use tmux; resume sessions in this terminal and return to the list after")
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
     ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
+    ap.add_argument("--no-notify", action="store_true", help="don't send a desktop notification when a session is waiting")
     ap.add_argument("--theme", help="Textual theme; default ansi-light or ansi-dark (follows macOS), "
                                     "which use the terminal's own colors and background. Also CSM_THEME.")
     ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
@@ -699,15 +740,16 @@ def main() -> None:
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
         host = tmux.Tmux(own=args.sidebar)
         host.mark_sidebar()
-        CSM(host=host, show_archived=args.archived, theme=args.theme).run()
+        CSM(host=host, show_archived=args.archived, theme=args.theme, notifications=not args.no_notify).run()
         return
     if not args.no_tmux and tmux.available():
-        extra = (["--archived"] if args.archived else []) + (["--theme", args.theme] if args.theme else [])
+        extra = (["--archived"] if args.archived else []) + (["--no-notify"] if args.no_notify else []) + (["--theme", args.theme] if args.theme else [])
         tmux.launch(extra)  # does not return
     focus = None
     claude = shutil.which("claude") or "claude"
     while True:
-        s = CSM(focus_id=focus, show_archived=args.archived, theme=args.theme).run()
+        s = CSM(focus_id=focus, show_archived=args.archived, theme=args.theme,
+                notifications=not args.no_notify).run()
         if s is None:
             return
         print(f"\n\033[2mresuming\033[0m {s.title}  \033[2m({tilde(s.cwd)})\033[0m\n", flush=True)
