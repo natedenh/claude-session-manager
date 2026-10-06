@@ -24,7 +24,7 @@ def assistant(content, cwd):
 @pytest.fixture
 def paths(tmp_path):
     p = data.Paths(claude=tmp_path / "claude", cache=tmp_path / "cache.json", prs=tmp_path / "prs.json",
-                   state=tmp_path / "state.json", trash=tmp_path / "Trash", desktop=tmp_path / "desktop")
+                   state=tmp_path / "state.json", trash=tmp_path / "Trash", export=tmp_path / "export", desktop=tmp_path / "desktop")
     p.projects.mkdir(parents=True)
     p.live.mkdir()
     return p
@@ -70,3 +70,12 @@ def sent(monkeypatch):
     out = []
     monkeypatch.setattr(notify, "send", out.append)
     return out
+
+
+@pytest.fixture(autouse=True)
+def no_real_finder(monkeypatch):
+    """Never open Finder from tests; revealed files are recorded in `revealed`."""
+    from csm import export
+    revealed = []
+    monkeypatch.setattr(export, "reveal", revealed.append)
+    return revealed
