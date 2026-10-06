@@ -15,7 +15,7 @@ csm
 
 Or run it without installing: `uv run csm`. For the side-by-side mode, `brew install tmux`.
 
-`csm --archived` starts with archived sessions shown. Colors come from the terminal, and its background shows through. The default theme is `ansi-light` or `ansi-dark`, following macOS appearance. Override it with `--theme <name>` or `CSM_THEME`; any Textual theme name works, e.g. `textual-dark` for csm's own colors. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
+`csm --archived` starts with archived sessions shown. Colors come from the terminal, and its background shows through. The default theme is `ansi-light` or `ansi-dark`, following macOS appearance. Override it with `--theme <name>` or `CSM_THEME`; any Textual theme name works, e.g. `textual-dark` for csm's own colors. A live session that finishes its turn is marked `◆` (bold) until you open it, and csm sends a desktop notification (OSC 9, which Ghostty shows as a macOS notification; not for the session shown beside the list). `csm --no-notify` turns the notifications off. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
 
 ### How the tmux mode works
 
@@ -36,7 +36,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `/` | filter by title, project or branch as you type |
 | `s` | search transcript text (runs on enter) |
 | `esc` | clear the filter and search |
-| `p` `w` `l` | only PR-linked / worktree / live sessions |
+| `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
 | `a` | also show archived sessions (dimmed) |
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
