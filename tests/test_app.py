@@ -124,7 +124,7 @@ async def test_enter_resumes(sessions):
     async with app.run_test() as pilot:
         await settle(pilot)
         await pilot.press("down", "down", "enter")  # skips the spacer, passes alpha's header
-    assert app.return_value.id == "a2"
+    assert app.return_value.focus_id == "a2"
 
 
 async def test_live_session_asks_before_resuming(sessions):
@@ -137,14 +137,14 @@ async def test_live_session_asks_before_resuming(sessions):
         assert app.return_value is None  # waiting on the confirm dialog
         await pilot.press("n")
         await pilot.press("enter", "y")
-    assert app.return_value.id == "b1"
+    assert app.return_value.focus_id == "b1"
 
 
 async def test_open_in_ghostty_scripts_running_app(sessions, monkeypatch):
     calls = []
     monkeypatch.setattr("csm.app.subprocess.run",
                         lambda argv, **kw: calls.append((argv, kw)) or subprocess.CompletedProcess(argv, 0, "", ""))
-    monkeypatch.setattr("csm.app.shutil.which", lambda _: "/bin/claude")
+    monkeypatch.setattr("csm.launch.shutil.which", lambda _: "/bin/claude")
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
@@ -174,6 +174,7 @@ async def test_live_session_in_ghostty_tab_is_focused(sessions, monkeypatch, tmp
 class FakeHost:
     def __init__(self):
         self.calls, self.panes, self.visible, self.own = [], {}, None, True
+        self.cwds = {}
 
     def hosted(self):
         return dict(self.panes)
@@ -183,6 +184,7 @@ class FakeHost:
 
     def show(self, sid, cwd, command, name=""):
         self.calls.append(("show", sid, command))
+        self.cwds[sid] = cwd
         self.panes.setdefault(sid, f"%{len(self.panes) + 1}")
         self.visible = sid
 
@@ -250,3 +252,80 @@ async def test_desktop_session_with_bad_id_falls_back_to_confirm(sessions, monke
         await pilot.press("enter")
         await settle(pilot)
         assert len(app.screen_stack) == 2  # confirm dialog
+
+
+async def test_new_on_session_and_header_non_host(sessions, tmp_path):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("n")
+    l = app.return_value
+    assert l.cwd == str(tmp_path / "beta") and l.argv[1] == "--session-id" and l.focus_id == l.argv[2]
+    assert len(l.argv) == 3
+
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("up")  # beta's header
+        assert app.query_one(SessionList).highlighted_option.id.startswith("p:")
+        await pilot.press("n")
+    assert app.return_value.cwd == str(tmp_path / "beta")
+
+
+async def test_new_worktree_adds_flag(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("N")
+    assert app.return_value.argv[-1] == "-w" and app.return_value.argv[1] == "--session-id"
+
+
+async def test_new_host_mode_shows_pending_row_until_pane_gone(sessions, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("n")
+        await settle(pilot)
+        [(_, sid, command)] = host.calls
+        assert command.endswith(f"--session-id {sid}") and host.cwds[sid] == str(tmp_path / "beta")
+        assert f"s:{sid}" in ids(app) and app.query_one(SessionList).highlighted_option.prompt.plain.startswith("▶")
+        assert "New session" in app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
+        await pilot.press("enter")  # shows it again rather than resuming
+        await settle(pilot)
+        assert len(host.calls) == 2 and host.calls[1][1] == sid and "-r" not in host.calls[1][2]
+        await pilot.press("n")  # from the pending row: same project
+        await settle(pilot)
+        assert host.cwds[host.calls[2][1]] == str(tmp_path / "beta")
+        host.panes.clear()
+        app.poll_live()
+        await settle(pilot)
+        assert f"s:{sid}" not in ids(app)
+
+
+async def test_pending_row_replaced_by_real_session(sessions, write, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("n")
+        await settle(pilot)
+        sid = host.calls[0][1]
+        write(str(tmp_path / "beta"), sid, user("hi", str(tmp_path / "beta")), rec(type="custom-title", customTitle="Real"))
+        app.load()
+        await settle(pilot)
+        assert ids(app).count(f"s:{sid}") == 1
+        assert "Real" in app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
+
+
+async def test_fork_builds_command(sessions, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("f")  # b1, the first session
+        await settle(pilot)
+        [(_, new_id, command)] = host.calls
+        assert command.endswith(f"-r b1 --fork-session --session-id {new_id}") and new_id != "b1"
+        assert host.cwds[new_id] == str(tmp_path / "beta")
+        assert "Fork of Beta setup" in app.query_one(SessionList).get_option(f"s:{new_id}").prompt.plain

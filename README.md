@@ -40,6 +40,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `a` | also show archived sessions (dimmed) |
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
+| `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists |
+| `f` | fork the highlighted session (`--fork-session`) |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
