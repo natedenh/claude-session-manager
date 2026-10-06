@@ -524,3 +524,15 @@ async def test_same_named_fork_and_original_are_labelled(paths, write, tmp_path)
         prompt = lambda sid: app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
         assert "⑃ fork ·" in prompt("fork") and "original ·" in prompt("orig")
         assert "fork" not in prompt("solo") and "original" not in prompt("solo")
+
+
+async def test_ctrl_backslash_moves_between_list_and_preview(sessions):
+    app = CSM(sessions)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        await pilot.click("#transcript")
+        assert app.focused.id == "transcript"
+        await pilot.press("ctrl+backslash")
+        assert isinstance(app.focused, SessionList)
+        await pilot.press("ctrl+backslash")
+        assert app.focused.id == "transcript"

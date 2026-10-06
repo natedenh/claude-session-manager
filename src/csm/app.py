@@ -68,7 +68,8 @@ HELP = """\
 [b]Open[/b]
   enter     beside this list in tmux, else here (back to the list when claude exits).
             A session already open in a Ghostty tab or Claude desktop is shown there.
-  ctrl+\\    (tmux) switch focus between this list and the session
+  ctrl+\\    switch focus between this list and the session beside it (tmux),
+            or the preview when no session is open
   n / N     new session in the highlighted project / in a new worktree
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
@@ -310,6 +311,7 @@ class CSM(App[Session | None]):
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
         Binding("ctrl+r", "reload", "Reload", show=False),
+        Binding("ctrl+backslash", "toggle_focus", "List / preview", show=False),
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("W", "worktrees", "Worktrees", show=False),
@@ -763,6 +765,15 @@ class CSM(App[Session | None]):
         self.push_screen(summary.screen(self.summary_page(), ago), done)
 
     # ---- preview ---------------------------------------------------------
+
+    def action_toggle_focus(self) -> None:
+        """ctrl+\\ with no session beside the list: move between the list and the preview."""
+        lst = self.query_one(SessionList)
+        transcript = self.query_one("#transcript")
+        if lst.has_focus and not self.screen.has_class("-narrow"):
+            transcript.focus()
+        else:
+            lst.focus()
 
     def show(self, s: Session | None) -> None:
         meta = self.query_one("#meta", Static)
