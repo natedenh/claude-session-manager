@@ -609,3 +609,47 @@ async def test_retire_only_archives_sessions_running_outside_csm(sessions, monke
         await pilot.press("y")
         await settle(pilot)
         assert not killed and data.State(sessions.state).archived == {"b1"}
+
+
+async def test_when_idle_waits_for_busy_session_then_acts(sessions, monkeypatch):
+    notes = []
+    monkeypatch.setattr("csm.app.notify.send", notes.append)
+    live = sessions.live / "1.json"
+    live.write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("at", "a")
+        assert "@archive" in row_text(app, "b1")
+        app.poll_live()
+        assert "b1" in data.State(sessions.state).when_idle  # still busy: waits
+        live.write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
+        app.poll_live()
+        await settle(pilot)
+        st = data.State(sessions.state)
+        assert st.archived == {"b1"} and st.when_idle == {}
+        lst = app.query_one(SessionList)
+        lst.highlighted = next(i for i, o in enumerate(lst.options) if o.id == "s:a2")
+        await pilot.press("at", "n")  # a2 isn't running: notifies on the next poll
+        app.poll_live()
+        await settle(pilot)
+        assert [n for n in notes if n.endswith("is idle")] == ["Add billing page is idle"]
+
+
+async def test_when_idle_send_needs_a_csm_pane(sessions):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("at", "s")  # b1 isn't in a csm pane, so s does nothing
+        assert "b1" not in app.state.when_idle
+        await pilot.press("escape")
+        host.panes = {"b1": "%1"}
+        app.poll_host()
+        (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
+        app.poll_live()
+        await pilot.press("at", "s", *"carry on", "enter")
+        assert app.state.when_idle["b1"] == {"do": "send", "text": "carry on"}
+        (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
+        app.poll_live()
+        assert ("send", "b1", "carry on") in host.calls

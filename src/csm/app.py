@@ -84,6 +84,7 @@ HELP = """\
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
   X         retire: stop it (csm pane or background job) and archive (marked, or highlighted)
+  @         when it goes idle: notify me, archive, retire, or (tmux) send it a prompt
   A         auto-archive rule (merged PRs, idle sessions); x keeps an auto-archived one
   E         export to Markdown (marked, or highlighted)
   #         edit tags (#waiting-on-chris; marked sessions get them added)
@@ -215,6 +216,31 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(yes)
 
 
+class WhenIdle(ModalScreen[str | None]):
+    """Pick what to do once a session goes idle: one key per choice."""
+    BINDINGS = [Binding("n", "pick('notify')", show=False), Binding("a", "pick('archive')", show=False),
+                Binding("r", "pick('retire')", show=False), Binding("s", "pick('send')", show=False),
+                Binding("c", "pick('cancel')", show=False), Binding("escape", "pick", show=False)]
+
+    def __init__(self, title: str, queued: str | None, can_send: bool):
+        super().__init__()
+        self.title_text, self.queued, self.can_send = title, queued, can_send
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(f"When “{self.title_text}” goes idle:")
+            yield Label("  n  notify me\n  a  archive it\n  r  retire it (stop and archive)"
+                        + ("\n  s  send it a prompt" if self.can_send else ""))
+            if self.queued:
+                yield Label(f"  c  cancel the queued “{self.queued}”")
+            yield Label("[dim]esc = close[/]")
+
+    def action_pick(self, choice: str | None = None) -> None:
+        if choice == "send" and not self.can_send or choice == "cancel" and not self.queued:
+            return
+        self.dismiss(choice)
+
+
 class AutoArchiveSettings(ModalScreen[dict | None]):
     BINDINGS = [Binding("escape", "cancel", show=False), Binding("ctrl+s", "save", show=False)]
 
@@ -283,6 +309,7 @@ class CSM(App[Session | None]):
         Binding("s", "search", "Search"),
         Binding("c", "close_session", "Close", show=False),
         Binding("X", "retire", "Retire", show=False),
+        Binding("at", "when_idle", "When idle", show=False),
         Binding("o", "open('tab')", "New tab", show=False),
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
@@ -433,6 +460,7 @@ class CSM(App[Session | None]):
         before = set(self.waiting), dict(self.permission)
         self.track_hooks(live)
         self.track(live)
+        changed = self.run_when_idle(live) or changed
         if (changed or (set(self.waiting), self.permission) != before
                 or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}
                 or data.viewers(live) != self.viewers):
@@ -579,7 +607,8 @@ class CSM(App[Session | None]):
         fork = self.fork_tag(s)
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
-        return Text.assemble(mark, dot, icon, (s.title, title), fork, bg, context_flag(s), tags, project)
+        then = Text(f"  @{q['do']}", style="cyan") if (q := self.state.when_idle.get(s.id)) else Text()
+        return Text.assemble(mark, dot, icon, (s.title, title), fork, bg, then, context_flag(s), tags, project)
 
     def fork_tag(self, s: Session) -> Text:
         """Forks copy their original's title; when both are listed, say which is which."""
@@ -1160,26 +1189,76 @@ class CSM(App[Session | None]):
             msg += f"\n{len(elsewhere)} running outside csm (Ghostty, desktop…) keep running; archived only."
 
         def done(yes: bool) -> None:
-            if not yes:
-                return
-            for i in panes:
+            if yes:
+                self.retire(targets)
+                self.marked.clear()
+                self.notify(f"Retired {what}", timeout=2)
+                self.rebuild()
+        self.push_screen(Confirm(msg), done)
+
+    def retire(self, targets: list[Session]) -> None:
+        ids, panes, jobs, _ = self.retire_plan(targets)
+        for i in panes:
+            try:
+                self.host.close(i)
+            except subprocess.CalledProcessError:
+                pass
+        for pid in jobs.values():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        self.state.archived |= ids
+        self.state.save()
+        if self.host:
+            self.poll_host()
+
+    def action_when_idle(self) -> None:
+        if not (s := self.selected()):
+            return
+        queued = self.state.when_idle.get(s.id, {}).get("do")
+        can_send = bool(self.host and s.id in self.hosted)
+
+        def queue(entry: dict) -> None:
+            self.state.when_idle[s.id] = entry
+            self.state.save()
+            self.notify(f"Will {entry['do']} “{s.title}” when it goes idle", timeout=2)
+            self.rebuild()
+
+        def picked(choice: str | None) -> None:
+            if choice == "cancel":
+                self.state.when_idle.pop(s.id, None)
+                self.state.save()
+                self.rebuild()
+            elif choice == "send":
+                self.push_screen(Prompt(f"Send to {s.title} when it goes idle"),
+                                 lambda text: text and queue({"do": "send", "text": text}))
+            elif choice:
+                queue({"do": choice})
+        self.push_screen(WhenIdle(s.title, queued, can_send), picked)
+
+    def run_when_idle(self, live: dict[str, LiveSession]) -> bool:
+        """Carry out queued actions for sessions that are idle or have stopped. True if any ran."""
+        due = [sid for sid in self.state.when_idle if (l := live.get(sid)) is None or l.status == "idle"]
+        for sid in due:
+            entry = self.state.when_idle.pop(sid)
+            s = self.by_id.get(sid)
+            title = s.title if s else sid[:8]
+            if entry["do"] == "notify":
+                self.send_notification(f"{title} is idle")
+            elif entry["do"] == "archive":
+                self.state.archived.add(sid)
+            elif entry["do"] == "retire" and s:
+                self.retire([s])
+            elif entry["do"] == "send" and self.host:
                 try:
-                    self.host.close(i)
+                    if self.host.send(sid, entry.get("text", "")):
+                        self.clear_attention(sid)
                 except subprocess.CalledProcessError:
                     pass
-            for pid in jobs.values():
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            self.state.archived |= ids
+        if due:
             self.state.save()
-            self.marked.clear()
-            if self.host:
-                self.poll_host()
-            self.notify(f"Retired {what}", timeout=2)
-            self.rebuild()
-        self.push_screen(Confirm(msg), done)
+        return bool(due)
 
     async def action_quit(self) -> None:
         if self.host and self.host.own:

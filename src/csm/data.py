@@ -455,6 +455,9 @@ def trash(session: Session, paths: Paths) -> Path:
     return dest
 
 
+WHEN_IDLE = ("notify", "archive", "retire", "send")
+
+
 class State:
     """csm's own persisted state.
 
@@ -463,7 +466,7 @@ class State:
     """
 
     SETS = ("archived", "collapsed", "pinned", "keep")
-    DICTS = ("auto_archive", "tags", "notes")
+    DICTS = ("auto_archive", "tags", "notes", "when_idle")
 
     def __init__(self, path: Path):
         self.path = path
@@ -487,12 +490,15 @@ class State:
         self.tags: dict[str, list[str]] = {k: normalize_tags(v) for k, v in (d.get("tags") or {}).items()
                                            if isinstance(v, list)}
         self.notes: dict[str, str] = {k: v for k, v in (d.get("notes") or {}).items() if isinstance(v, str) and v}
+        # {session id: {"do": "notify" | "archive" | "retire" | "send", "text": prompt to send}}
+        self.when_idle: dict[str, dict] = {k: v for k, v in (d.get("when_idle") or {}).items()
+                                           if isinstance(v, dict) and v.get("do") in WHEN_IDLE}
         self.base = self._snapshot()
 
     def _snapshot(self) -> dict:
         return {"archived": set(self.archived), "collapsed": set(self.collapsed), "pinned": set(self.pinned),
                 "flat": self.flat, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
-                "tags": dict(self.tags), "notes": dict(self.notes)}
+                "tags": dict(self.tags), "notes": dict(self.notes), "when_idle": dict(self.when_idle)}
 
     def reload(self) -> bool:
         """Pick up changes made to the file elsewhere, keeping unsaved ones made here. True if anything changed."""
@@ -538,7 +544,7 @@ class State:
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
                                 "pinned": sorted(self.pinned), "flat": self.flat,
                                 "keep": sorted(self.keep), "auto_archive": self.auto_archive,
-                                "tags": self.tags, "notes": self.notes})
+                                "tags": self.tags, "notes": self.notes, "when_idle": self.when_idle})
         self.base = self._snapshot()
         try:
             self.mtime = self.path.stat().st_mtime_ns
