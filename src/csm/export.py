@@ -15,7 +15,11 @@ MAX_TITLE = 80
 
 
 def filename(s: Session) -> str:
-    date = (s.started or "")[:10] or datetime.fromtimestamp(s.mtime).strftime("%Y-%m-%d")
+    try:  # `started` is UTC; name the file by the local date the session began
+        when = datetime.fromisoformat(s.started.replace("Z", "+00:00")).astimezone()
+    except (AttributeError, ValueError):
+        when = datetime.fromtimestamp(s.mtime)
+    date = when.strftime("%Y-%m-%d")
     title = " ".join(UNSAFE_RE.sub(" ", s.title).split()).lstrip(".")[:MAX_TITLE].rstrip() or "session"
     return f"{date} {title}.md"
 
