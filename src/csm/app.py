@@ -25,7 +25,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, ghostty, tmux
+from . import data, desktop, ghostty, prs, tmux
 from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
@@ -67,9 +67,34 @@ HELP = """\
   ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
 
 [b]Icons[/b]
-  [green]⇄[/] PR linked   [magenta]⑂[/] worktree   [dim]○[/] other
+  [green]⇄[/] PR linked (colored by status: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed/draft[/])
+  [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
 """
+
+
+def pr_style(st: prs.PRStatus | None) -> str:
+    """Icon color for a PR; plain green when its status is unknown."""
+    if st is None:
+        return "green"
+    if st.state == "merged":
+        return "magenta"
+    if st.state in ("closed", "draft"):
+        return "dim"
+    if st.checks == "failing" or st.review == "changes_requested":
+        return "red"
+    if st.checks == "pending" or st.review == "review_required":
+        return "yellow"
+    return "green"
+
+
+def pr_summary(st: prs.PRStatus) -> str:
+    parts = [st.state]
+    if st.checks != "none" and not st.final:
+        parts.append(f"checks {st.passed}/{st.total} {st.checks}")
+    if st.review and not st.final:
+        parts.append(st.review.replace("_", " "))
+    return " · ".join(parts)
 
 
 def ago(ts: float) -> str:
@@ -208,6 +233,7 @@ class CSM(App[Session | None]):
         self.expanded: set[str] = set()
         self.by_id: dict[str, Session] = {}
         self.loaded = False
+        self.pr_status: dict[str, prs.PRStatus] = {}
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="/ to filter, s to search transcripts", id="search")
@@ -231,6 +257,7 @@ class CSM(App[Session | None]):
         self.load()
         self.set_interval(2, self.poll_live)
         self.set_interval(20, self.load)
+        self.set_interval(60, self.refresh_prs)
 
     # ---- loading ---------------------------------------------------------
 
@@ -241,6 +268,18 @@ class CSM(App[Session | None]):
         desktop = data.load_desktop(self.paths)
         self.call_from_thread(self.set_sessions, sessions, live, desktop)
 
+    @work(thread=True, exclusive=True, group="prs")
+    def refresh_prs(self) -> None:
+        recent = sorted(self.sessions, key=lambda s: -s.mtime)
+        urls = list(dict.fromkeys(s.pr_url for s in recent if s.pr_url))
+        prs.refresh(self.paths, urls)
+        self.call_from_thread(self.set_pr_status, prs.load(self.paths))
+
+    def set_pr_status(self, status: dict[str, prs.PRStatus]) -> None:
+        if status != self.pr_status:
+            self.pr_status = status
+            self.rebuild()
+
     def set_sessions(self, sessions: list[Session], live: dict[str, LiveSession],
                      desktop: dict[str, data.DesktopRecord]) -> None:
         changed = ([(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
@@ -249,6 +288,7 @@ class CSM(App[Session | None]):
         if changed or not self.loaded:
             self.loaded = True
             self.rebuild()
+            self.refresh_prs()
 
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
@@ -305,7 +345,7 @@ class CSM(App[Session | None]):
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = ("▶ " if s.id == self.shown_id else "● " if live else "  ", style)
-        icon = ("⇄ ", "green") if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
+        icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         return Text.assemble(dot, icon, (s.title, "dim italic" if self.archived_by(s) else ""))
 
     def rebuild(self) -> None:
@@ -406,7 +446,9 @@ class CSM(App[Session | None]):
             lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
                                        f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
         if s.pr_url:
-            lines.append(Text.assemble(("⇄ ", "green"), (f"#{s.pr_number} ", "bold"), (s.pr_url, "dim")))
+            st = self.pr_status.get(s.pr_url)
+            lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
+                                       pr_summary(st) + "  " if st else "", (s.pr_url, "dim")))
         if by := self.archived_by(s):
             lines.append(Text(f"archived in {by}", style="italic yellow"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
