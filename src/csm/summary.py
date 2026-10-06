@@ -209,7 +209,7 @@ def build(sessions: list[Session], live: dict[str, LiveSession], waiting: set[st
 
 # ---- rendering --------------------------------------------------------------
 
-SECTIONS = (("needs_you", "Needs you", "bold yellow"), ("decisions", "Decisions", "bold cyan"),
+SECTIONS = (("needs_you", "Needs you", "warn.bold"), ("decisions", "Decisions", "bold cyan"),
             ("finished", "Finished", "bold green"), ("running", "Still running", "bold"))
 
 

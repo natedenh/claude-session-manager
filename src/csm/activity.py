@@ -84,14 +84,16 @@ class Activity(Static):
         energy = 1 + 0.15 * min(self.busy, 4)
         line = wave(n, self.phase, self.amp, energy)
         light = glow(n, self.phase, 1 + (self.busy >= 3))
-        text = Text(label, style="yellow")
+        text = Text(label, style="warn")
+        unlit = UNLIT if self.app.current_theme.dark else UNLIT_ON_LIGHT
         for ch, g in zip(line, light):
             g *= self.amp
-            text.append(ch, UNLIT if g < 0.12 else lit(g))
+            text.append(ch, unlit if g < 0.12 else lit(g))
         self.update(text)
 
 
 UNLIT = Style(color="yellow", dim=True)  # the terminal's own yellow, like the rest of csm
+UNLIT_ON_LIGHT = Style(color=Color.parse("#b0905a"))  # light themes often make yellow too pale to see
 
 
 def lit(g: float) -> Style:

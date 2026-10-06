@@ -57,3 +57,12 @@ async def test_wave_eases_out_to_a_flat_line_and_stops(sessions):  # noqa: F811
         await pilot.pause(2.5)
         assert bar.amp == 0.0 and not bar.timer._active.is_set()
         assert set(str(bar.render()).strip()) == {LINE[2]}
+
+
+async def test_warn_color_is_readable_on_light_themes(sessions, monkeypatch):  # noqa: F811
+    from csm.app import WARN_ON_LIGHT
+    for theme, expected in (("ansi-light", WARN_ON_LIGHT), ("ansi-dark", "yellow")):
+        app = CSM(sessions, theme=theme)
+        async with app.run_test() as pilot:
+            await settle(pilot)
+            assert str(app.console.get_style("warn").color.name).lower() == expected.lower()

@@ -172,7 +172,7 @@ def row(wt: Worktree, now: float) -> tuple:
     changes = "" if wt.missing else "clean" if wt.dirty == 0 else n(wt.dirty)
     style = "dim" if wt.live else ""
     flag = Text("live" if wt.live else f"remove: {wt.reason}" if wt.candidate else "",
-                style="green" if wt.live else "yellow")
+                style="green" if wt.live else "warn")
     return (wt.project, wt.name, wt.branch or "-", str(len(wt.sessions)), ago_days(wt.last_active, now),
             wt.pr or "", "missing" if wt.missing else changes, "" if wt.missing else n(wt.unpushed), flag), style
 

@@ -94,8 +94,8 @@ def test_fetch_failures(monkeypatch):
 
 @pytest.mark.parametrize("kw,style", [
     (dict(), "green"),
-    (dict(checks=[run("a", "IN_PROGRESS", "")]), "yellow"),
-    (dict(review="REVIEW_REQUIRED"), "yellow"),
+    (dict(checks=[run("a", "IN_PROGRESS", "")]), "warn"),
+    (dict(review="REVIEW_REQUIRED"), "warn"),
     (dict(checks=[run("a", conclusion="FAILURE")]), "red"),
     (dict(review="CHANGES_REQUESTED", checks=[run("a")]), "red"),
     (dict(state="MERGED"), "magenta"),
@@ -124,6 +124,6 @@ async def test_app_colors_icon_and_preview(sessions, monkeypatch):  # noqa: F811
         await settle(pilot)
         s = app.by_id["a2"]
         assert app.pr_status[URL].checks == "pending"
-        assert any(sp.style == "yellow" for sp in app.row(s).spans)
+        assert any(sp.style == "warn" for sp in app.row(s).spans)
         text = "\n".join(r.plain for r in app.meta(s).renderables if hasattr(r, "plain"))
         assert "open · checks 1/2 pending · approved" in text

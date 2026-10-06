@@ -34,7 +34,8 @@ from .worktrees import Worktrees
 
 PER_PROJECT = 5
 PINNED = "__pinned__"  # pseudo-project key for the Pinned group
-STATUS_STYLE = {"idle": "green", "busy": "yellow"}
+WARN_ON_LIGHT = "#9a6700"  # dark amber: readable on light backgrounds
+STATUS_STYLE = {"idle": "green", "busy": "warn"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "waiting": "waiting"}
 MAX_MESSAGE_CHARS = 2500
 THEMES = ("ansi-light", "ansi-dark")  # Textual's themes that use the terminal's own colors
@@ -90,8 +91,8 @@ HELP = """\
   q         quit (in tmux: detach; sessions keep running)
 
 [b]Icons[/b]
-  [green]⇄[/] PR linked: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
+  [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
+  [green]●[/] live, idle   [warn]●[/] live, busy   ▶ shown beside the list
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
 """
 
@@ -107,7 +108,7 @@ def pr_style(st: prs.PRStatus | None) -> str:
     if st.checks == "failing" or st.review == "changes_requested":
         return "red"
     if st.checks == "pending" or st.review == "review_required":
-        return "yellow"
+        return "warn"
     return "green"
 
 
@@ -135,7 +136,7 @@ def context_fraction(s: Session) -> float | None:
 
 
 def context_style(frac: float) -> str:
-    return "red" if frac > 0.8 else "yellow" if frac >= 0.5 else "dim"
+    return "red" if frac > 0.8 else "warn" if frac >= 0.5 else "dim"
 
 
 def context_flag(s: Session) -> Text:
@@ -365,8 +366,11 @@ class CSM(App[Session | None]):
 
     def on_mount(self) -> None:
         self.theme = self.theme_name
-        # Rich styles `inline code` "on black"; keep the terminal's background instead.
-        self.console.push_theme(RichTheme({"markdown.code": "bold cyan"}))
+        # Rich styles `inline code` "on black"; keep the terminal's background instead. "warn" is
+        # the terminal's yellow on dark themes, but light themes often make yellow unreadably pale.
+        warn = "yellow" if self.current_theme.dark else WARN_ON_LIGHT
+        self.console.push_theme(RichTheme({"markdown.code": "bold cyan", "warn": warn,
+                                           "warn.bold": f"bold {warn}", "warn.italic": f"italic {warn}"}))
         self.query_one("#search", Input).border_title = "filter"
         self.query_one(SessionList).focus()
         if self.host:
@@ -549,7 +553,7 @@ class CSM(App[Session | None]):
         if s.id in self.permission:
             return "? ", "bold red"
         if s.id in self.waiting:
-            return "◆ ", "bold " + style
+            return "◆ ", f"{style}.bold" if style == "warn" else f"bold {style}"
         return ("● " if live else "  "), style
 
     def rebuild(self) -> None:
@@ -763,7 +767,7 @@ class CSM(App[Session | None]):
         if note := self.state.notes.get(s.id):
             lines.append(Text.assemble(("note: ", "dim"), note))
         if by := self.archived_by(s):
-            lines.append(Text(self.auto_reason(s) if by == "auto" else f"archived in {by}", style="italic yellow"))
+            lines.append(Text(self.auto_reason(s) if by == "auto" else f"archived in {by}", style="warn.italic"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
         if self.hits and s.id in self.hits:
             lines.append(Text(""))

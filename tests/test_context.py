@@ -37,14 +37,14 @@ def test_window_size():
 
 
 def test_style_thresholds():
-    assert [context_style(f) for f in (0.49, 0.5, 0.8, 0.81)] == ["dim", "yellow", "yellow", "red"]
+    assert [context_style(f) for f in (0.49, 0.5, 0.8, 0.81)] == ["dim", "warn", "warn", "red"]
 
 
 def test_preview_text(paths, write, tmp_path):
     s = parsed(paths, write, tmp_path, turn(104_000))
     line = context_line(s)
     assert line.plain == "context ▰▰▰▰▰▱▱▱▱▱ 52% · 104k of 200k tokens"
-    assert line.style == "yellow"
+    assert line.style == "warn"
 
 
 def test_row_flag_only_above_80_percent(paths, write, tmp_path):
