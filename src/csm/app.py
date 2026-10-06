@@ -555,6 +555,7 @@ class CSM(App[Session | None]):
     def rebuild(self) -> None:
         lst = self.query_one(SessionList)
         current = lst.highlighted_option.id if lst.highlighted_option else None
+        was = lst.highlighted  # where the cursor sat, for when its row disappears
         keep = f"s:{self.focus_id}" if self.focus_id else current
         self.focus_id = None
         visible = self.visible()
@@ -605,7 +606,12 @@ class CSM(App[Session | None]):
         if keep and keep in ids:
             lst.highlighted = ids.index(keep)
         elif ids:
-            lst.highlighted = next((i for i, x in enumerate(ids) if x and x.startswith("s:")), 0)
+            rows = [i for i, x in enumerate(ids) if x and x.startswith("s:")]
+            if was is not None and current and current.startswith("s:") and rows:
+                # The highlighted session went away (archived, trashed): stay put, on the next one.
+                lst.highlighted = next((i for i in rows if i >= was), rows[-1])
+            else:
+                lst.highlighted = rows[0] if rows else 0
         else:
             self.show(None)
         self.update_status(len(visible))

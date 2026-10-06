@@ -471,3 +471,20 @@ async def test_side_by_side_marks_both_sessions(sessions):
         lst = app.query_one(SessionList)
         marked = [o.id for o in lst.options if str(o.prompt).lstrip().startswith("▶")]
         assert first in marked and len(marked) == 2
+
+
+async def test_archiving_keeps_the_cursor_in_place(paths, write, tmp_path):
+    repo = str(tmp_path / "repo")
+    for i, sid in enumerate(["s1", "s2", "s3", "s4"]):
+        f = write(repo, sid, user("hi", repo), rec(type="custom-title", customTitle=sid))
+        os.utime(f, (2_000_000 - i,) * 2)  # s1 newest
+    app = CSM(paths)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        goto(app, "s2")
+        await pilot.press("x")
+        assert app.selected().id == "s3"  # the next one, not the top of the list
+        await pilot.press("x")
+        assert app.selected().id == "s4"
+        await pilot.press("x")
+        assert app.selected().id == "s1"  # last row gone: the one above it
