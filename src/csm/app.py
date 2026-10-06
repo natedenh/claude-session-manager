@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shlex
-import shutil
 import signal
 import subprocess
 import time
@@ -25,8 +23,9 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, ghostty, tmux
+from . import data, desktop, ghostty, launch, tmux
 from .data import LiveSession, Message, Session
+from .launch import Launch, Pending
 
 PER_PROJECT = 5
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
@@ -62,6 +61,8 @@ HELP = """\
   ctrl+\\       (tmux) switch between this list and the session
   c            (tmux) close the session's claude process
   o / O        resume in a new Ghostty tab / window
+  n / N        new session / new session in a worktree, in the highlighted project
+  f            fork the highlighted session into a new one
   r            rename                   x        archive / unarchive
   y            copy session id          d        move transcript to the Trash
   ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
@@ -170,6 +171,9 @@ class CSM(App[Session | None]):
         Binding("c", "close_session", "Close", show=False),
         Binding("o", "open('tab')", "New tab"),
         Binding("O", "open('window')", "New window", show=False),
+        Binding("n", "new", "New"),
+        Binding("N", "new(True)", "New in worktree", show=False),
+        Binding("f", "fork", "Fork", show=False),
         Binding("r", "rename", "Rename"),
         Binding("x", "archive", "Archive"),
         Binding("p", "toggle('pr')", "PRs"),
@@ -207,6 +211,7 @@ class CSM(App[Session | None]):
         self.hits: dict[str, list[str]] | None = None
         self.expanded: set[str] = set()
         self.by_id: dict[str, Session] = {}
+        self.pending: dict[str, Pending] = {}
         self.loaded = False
 
     def compose(self) -> ComposeResult:
@@ -301,6 +306,18 @@ class CSM(App[Session | None]):
             return "Claude desktop"
         return None
 
+    def pending_groups(self) -> dict[str, list[Pending]]:
+        known = {s.id for s in self.sessions}
+        self.pending = {k: p for k, p in self.pending.items() if k not in known and k in self.hosted}
+        out: dict[str, list[Pending]] = {}
+        for p in reversed(self.pending.values()):
+            out.setdefault(p.project, []).append(p)
+        return out if not self.narrowed else {}
+
+    def pending_row(self, p: Pending) -> Text:
+        dot = "▶ " if p.id == self.shown_id else "● "
+        return Text.assemble((dot, "cyan"), ("○ ", "dim"), (p.launch.label, "italic"))
+
     def row(self, s: Session) -> Text:
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
@@ -314,6 +331,8 @@ class CSM(App[Session | None]):
         keep = f"s:{self.focus_id}" if self.focus_id else current
         self.focus_id = None
         groups = self.groups()
+        pending = self.pending_groups()
+        groups = {**{k: [] for k in pending if k not in groups}, **groups}
         options: list[Option | None] = []
         self.by_id = {}
         for project, sessions in groups.items():
@@ -324,8 +343,10 @@ class CSM(App[Session | None]):
             if options:
                 options.append(Option("", disabled=True))
             options.append(Option(Text.assemble(
-                ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions)}", "dim")),
+                ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(pending.get(project, []))}", "dim")),
                 id=f"p:{project}"))
+            for p in [] if collapsed else pending.get(project, []):
+                options.append(Option(self.pending_row(p), id=f"s:{p.id}"))
             for s in shown:
                 self.by_id[s.id] = s
                 options.append(Option(self.row(s), id=f"s:{s.id}"))
@@ -373,6 +394,8 @@ class CSM(App[Session | None]):
         elif kind == "m:":
             self.expanded.add(key)
             self.rebuild()
+        elif p := self.pending.get(key):
+            self.start_launch(p.launch)
         elif s := self.by_id.get(key):
             self.resume(s)
 
@@ -579,15 +602,46 @@ class CSM(App[Session | None]):
             self.call_from_thread(self.start, s)
 
     def start(self, s: Session) -> None:
+        self.start_launch(launch.resume(s.id, s.cwd, s.title))
+
+    def start_launch(self, l: Launch) -> None:
         if not self.host:
-            self.exit(s)
+            self.exit(l)
             return
         try:
-            self.host.show(s.id, s.cwd, claude_command(s), s.title[:40])
+            self.host.show(l.focus_id, l.cwd, l.command, l.label[:40])
         except subprocess.CalledProcessError as e:
             self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
         self.poll_host()
         self.rebuild()
+
+    def current_project(self) -> str | None:
+        opt = self.query_one(SessionList).highlighted_option
+        if not opt or not opt.id:
+            return None
+        kind, key = opt.id[:2], opt.id[2:]
+        if kind in ("p:", "m:"):
+            return key
+        p = self.pending.get(key)
+        s = self.by_id.get(key)
+        return p.project if p else s.project if s else None
+
+    def begin(self, l: Launch, project: str) -> None:
+        if not os.path.isdir(l.cwd):
+            self.notify(f"{tilde(l.cwd)} no longer exists", severity="error")
+            return
+        if self.host:
+            self.pending[l.focus_id] = Pending(l.focus_id, project, l)
+            self.focus_id = l.focus_id
+        self.start_launch(l)
+
+    def action_new(self, worktree: bool = False) -> None:
+        if project := self.current_project():
+            self.begin(launch.new(project, worktree), project)
+
+    def action_fork(self) -> None:
+        if s := self.selected():
+            self.begin(launch.fork(s.id, s.cwd, s.title), s.project)
 
     def action_close_session(self) -> None:
         if not (s := self.selected()):
@@ -628,7 +682,7 @@ class CSM(App[Session | None]):
         # AppleScript drives the running Ghostty. `open -na Ghostty.app` would start a
         # second instance, which restores every saved tab alongside the new one.
         try:
-            ghostty.open_session(s.cwd, claude_command(s), where)
+            ghostty.open_session(s.cwd, launch.resume(s.id, s.cwd).command, where)
         except RuntimeError as e:
             self.call_from_thread(self.notify, f"Ghostty: {e}", severity="error")
         else:
@@ -682,10 +736,6 @@ class CSM(App[Session | None]):
         self.push_screen(Confirm(f"Move “{s.title}” to the Trash?"), done)
 
 
-def claude_command(s: Session) -> str:
-    return shlex.join([shutil.which("claude") or "claude", "-r", s.id])
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(prog="csm", description=__doc__)
     ap.add_argument("--no-tmux", action="store_true",
@@ -705,22 +755,21 @@ def main() -> None:
         extra = (["--archived"] if args.archived else []) + (["--theme", args.theme] if args.theme else [])
         tmux.launch(extra)  # does not return
     focus = None
-    claude = shutil.which("claude") or "claude"
     while True:
-        s = CSM(focus_id=focus, show_archived=args.archived, theme=args.theme).run()
-        if s is None:
+        l = CSM(focus_id=focus, show_archived=args.archived, theme=args.theme).run()
+        if l is None:
             return
-        print(f"\n\033[2mresuming\033[0m {s.title}  \033[2m({tilde(s.cwd)})\033[0m\n", flush=True)
+        print(f"\n\033[2mstarting\033[0m {l.label}  \033[2m({tilde(l.cwd)})\033[0m\n", flush=True)
         # A handler (unlike SIG_IGN) resets to the default on exec, so claude still gets ^C
         # while we survive it and can bring the list back.
         previous = signal.signal(signal.SIGINT, lambda *_: None)
         try:
-            subprocess.run([claude, "-r", s.id], cwd=s.cwd if os.path.isdir(s.cwd) else None)
+            subprocess.run(l.argv, cwd=l.cwd if os.path.isdir(l.cwd) else None)
         finally:
             signal.signal(signal.SIGINT, previous)
         if args.once:
             return
-        focus = s.id
+        focus = l.focus_id
 
 
 if __name__ == "__main__":
