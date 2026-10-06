@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.widgets import Footer, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
@@ -72,6 +73,7 @@ HELP = """\
   ctrl+\\    cycle focus: this list, then the sessions beside it top to bottom (tmux);
             with none open, switch between this list and the preview
   n / N     new session in the highlighted project / in a new worktree
+  P         new session in any directory (tab completes; offers to create a missing one)
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
@@ -227,6 +229,56 @@ class Prompt(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+def complete_dir(value: str) -> str:
+    """Extend a typed path as far as the directories on disk agree, adding / once it's unique."""
+    parent, prefix = os.path.split(os.path.expanduser(value))
+    try:
+        names = sorted(e.name for e in os.scandir(parent or ".") if e.is_dir() and e.name.startswith(prefix)
+                       and (prefix.startswith(".") or not e.name.startswith(".")))
+    except OSError:
+        return value
+    if not names:
+        return value
+    common = os.path.commonprefix(names)
+    return value + common[len(prefix):] + ("/" if len(names) == 1 else "")
+
+
+class DirSuggester(Suggester):
+    def __init__(self):
+        super().__init__(use_cache=False)
+
+    async def get_suggestion(self, value: str) -> str | None:
+        done = complete_dir(value)
+        return done if done != value else None
+
+
+class DirPrompt(ModalScreen[str | None]):
+    """Ask for a directory; tab (or →) takes the grey completion."""
+    BINDINGS = [Binding("escape", "cancel", show=False), Binding("tab", "complete", show=False)]
+
+    def __init__(self, title: str, value: str):
+        super().__init__()
+        self.title_text, self.value = title, value
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self.title_text)
+            yield Input(value=self.value, suggester=DirSuggester())
+            yield Label("[dim]tab = complete    enter = start    esc = cancel[/]")
+
+    def action_complete(self) -> None:
+        box = self.query_one(Input)
+        box.value = complete_dir(box.value)
+        box.cursor_position = len(box.value)
+
+    @on(Input.Submitted)
+    def submit(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class Confirm(ModalScreen[bool]):
     BINDINGS = [
         Binding("y", "answer(True)", show=False),
@@ -347,6 +399,7 @@ class CSM(App[Session | None]):
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
         Binding("N", "new(True)", "New in worktree", show=False),
+        Binding("P", "new_project", "New in a directory", show=False),
         Binding("R", "reply", "Reply", show=False),
         Binding("vertical_line", "open_also", "Side by side", show=False),
         Binding("f", "fork", "Fork", show=False),
@@ -1164,6 +1217,36 @@ class CSM(App[Session | None]):
     def action_new(self, worktree: bool = False) -> None:
         if project := self.current_project():
             self.begin(launch.new(project, worktree), project)
+
+    def action_new_project(self) -> None:
+        """New session in any directory, including one Claude has never run in (or one to create)."""
+        start = os.path.dirname(self.current_project() or "")
+        if not os.path.isdir(start):
+            start = next(d for d in (os.path.expanduser("~/projects"), os.path.expanduser("~")) if os.path.isdir(d))
+        start = tilde(start).rstrip("/") + "/"
+
+        def create(path: str, yes: bool) -> None:
+            if not yes:
+                return
+            try:
+                os.makedirs(path)
+            except OSError as e:
+                self.notify(f"Couldn't create {tilde(path)}: {e.strerror}", severity="error")
+                return
+            self.begin(launch.new(path), path)
+
+        def done(text: str | None) -> None:
+            if not text:
+                return
+            path = os.path.abspath(os.path.expanduser(text))
+            if os.path.isdir(path):
+                self.begin(launch.new(path), path)
+            elif os.path.exists(path):
+                self.notify(f"{tilde(path)} isn't a directory", severity="error")
+            else:
+                self.push_screen(Confirm(f"Create {tilde(path)}?"), lambda yes: create(path, yes))
+
+        self.push_screen(DirPrompt("New session in", start), done)
 
     def action_fork(self) -> None:
         if s := self.selected():

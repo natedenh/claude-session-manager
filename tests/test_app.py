@@ -737,3 +737,60 @@ async def test_hover_is_a_fixed_grey(sessions):
         lst = app.query_one(SessionList)
         hover = lst.get_visual_style("option-list--option", "option-list--option-hover").rich_style.bgcolor
         assert hover.get_truecolor().hex == "#3a3a3a"  # not a terminal palette color, which can't be softened
+
+
+def test_complete_dir(tmp_path):
+    for d in ("alpha", "alpine", "beta", ".hidden"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "alps.txt").write_text("")
+    from csm.app import complete_dir
+    base = str(tmp_path) + "/"
+    assert complete_dir(base + "al") == base + "alp"  # as far as alpha and alpine agree; files don't count
+    assert complete_dir(base + "b") == base + "beta/"
+    assert complete_dir(base + "z") == base + "z"
+    assert complete_dir(base + ".h") == base + ".hidden/"
+    assert complete_dir(base + "nope/x") == base + "nope/x"
+
+
+async def test_new_project_in_a_new_directory(sessions, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    target = tmp_path / "fresh" / "thing"
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("P")
+        await settle(pilot)
+        box = app.screen.query_one("Input")
+        assert box.value == str(tmp_path).replace(os.path.expanduser("~"), "~", 1).rstrip("/") + "/"
+        box.value = str(target)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert not target.exists()  # asks first
+        await pilot.press("y")
+        await settle(pilot)
+        assert target.is_dir()
+        [(_, sid, command)] = host.calls
+        assert host.cwds[sid] == str(target) and command.endswith(f"--session-id {sid}")
+        assert f"p:{target}" in [o.id for o in app.query_one(SessionList).options] and f"s:{sid}" in ids(app)
+
+
+async def test_new_project_rejects_a_file_and_cancels(sessions, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    (tmp_path / "afile").write_text("")
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("P")
+        await settle(pilot)
+        app.screen.query_one("Input").value = str(tmp_path / "afile")
+        await pilot.press("enter")
+        await settle(pilot)
+        await pilot.press("P")
+        await settle(pilot)
+        box = app.screen.query_one("Input")
+        box.value = str(tmp_path / "bet")
+        await pilot.press("tab")
+        assert box.value == str(tmp_path / "beta") + "/"
+        await pilot.press("escape")
+        await settle(pilot)
+    assert host.calls == []

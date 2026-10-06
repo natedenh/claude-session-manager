@@ -43,6 +43,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
 | `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists |
+| `P` | new session in any directory, such as a project Claude has never run in. Starts at the highlighted project's parent folder; `tab` completes, and a missing directory is created after you confirm |
 | `f` | fork the highlighted session (`--fork-session`), named "<title> (fork)" |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
