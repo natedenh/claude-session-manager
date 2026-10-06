@@ -66,3 +66,21 @@ async def test_warn_color_is_readable_on_light_themes(sessions, monkeypatch):  #
         async with app.run_test() as pilot:
             await settle(pilot)
             assert str(app.console.get_style("warn").color.name).lower() == expected.lower()
+
+
+async def test_working_dots_pulse_and_idle_dots_dont(sessions):  # noqa: F811
+    from csm.app import SessionList
+    (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
+    (sessions.live / "2.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "a2", "status": "idle"}))
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        lst = app.query_one(SessionList)
+        dot = lambda sid: lst.get_option(f"s:{sid}").prompt.spans[0].style
+        assert app.pulse_timer._active.is_set()
+        seen_b1, seen_a2 = {str(dot("b1"))}, {str(dot("a2"))}
+        for _ in range(3):
+            app.pulse()
+            seen_b1.add(str(dot("b1")))
+            seen_a2.add(str(dot("a2")))
+        assert seen_b1 == {"warn", "warn.dim"} and seen_a2 == {"green"}

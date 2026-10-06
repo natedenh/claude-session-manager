@@ -34,6 +34,7 @@ from .worktrees import Worktrees
 
 PER_PROJECT = 5
 PINNED = "__pinned__"  # pseudo-project key for the Pinned group
+PULSE = 0.8  # seconds per half of a working session's dot pulse
 WARN_ON_LIGHT = "#9a6700"  # dark amber: readable on light backgrounds
 STATUS_STYLE = {"idle": "green", "busy": "warn"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "waiting": "waiting"}
@@ -329,6 +330,8 @@ class CSM(App[Session | None]):
         self.paths = paths or data.Paths()
         self.digests = summary.Digests(self.paths.summaries)
         self.said: dict[tuple[str, float], str | None] = {}  # (id, mtime) -> end of last assistant message
+        self.pulse_on = True
+        self.row_args: dict[str, bool] = {}  # session id -> with_project, to redraw a row in place
         self.focus_id = focus_id
         self.state = data.State(self.paths.state)
         self.sessions: list[Session] = []
@@ -365,12 +368,14 @@ class CSM(App[Session | None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.pulse_timer = self.set_interval(PULSE, self.pulse, pause=True)
         self.theme = self.theme_name
         # Rich styles `inline code` "on black"; keep the terminal's background instead. "warn" is
         # the terminal's yellow on dark themes, but light themes often make yellow unreadably pale.
         warn = "yellow" if self.current_theme.dark else WARN_ON_LIGHT
         self.console.push_theme(RichTheme({"markdown.code": "bold cyan", "warn": warn,
-                                           "warn.bold": f"bold {warn}", "warn.italic": f"italic {warn}"}))
+                                           "warn.bold": f"bold {warn}", "warn.italic": f"italic {warn}",
+                                           "warn.dim": f"dim {warn}"}))
         self.query_one("#search", Input).border_title = "filter"
         self.query_one(SessionList).focus()
         if self.host:
@@ -554,7 +559,17 @@ class CSM(App[Session | None]):
             return "? ", "bold red"
         if s.id in self.waiting:
             return "◆ ", f"{style}.bold" if style == "warn" else f"bold {style}"
+        if live and live.status != "idle" and not self.pulse_on:  # working: a slow pulse
+            return "● ", "warn.dim" if style == "warn" else f"dim {style}"
         return ("● " if live else "  "), style
+
+    def pulse(self) -> None:
+        """Redraw only the working sessions' rows, so the pulse doesn't rebuild the list."""
+        self.pulse_on = not self.pulse_on
+        lst = self.query_one(SessionList)
+        for sid, with_project in self.row_args.items():
+            if (live := self.live.get(sid)) and live.status != "idle" and (s := self.by_id.get(sid)):
+                lst.replace_option_prompt(f"s:{sid}", self.row(s, with_project))
 
     def rebuild(self) -> None:
         lst = self.query_one(SessionList)
@@ -582,7 +597,7 @@ class CSM(App[Session | None]):
         options: list[Option | None] = []
         if not self.narrowed:
             options.append(Option(self.summary_row(), id="S:summary"))  # groups add their own spacer
-        self.by_id = {}
+        self.by_id, self.row_args = {}, {}
         for project, name, sessions, cap, with_project in sections:
             new = pending_for(project)
             if not sessions and not new:
@@ -600,6 +615,7 @@ class CSM(App[Session | None]):
                 options.append(Option(self.pending_row(p), id=f"s:{p.id}"))
             for s in shown:
                 self.by_id[s.id] = s
+                self.row_args[s.id] = with_project
                 options.append(Option(self.row(s, with_project), id=f"s:{s.id}"))
             if len(shown) < len(sessions) and not collapsed:
                 options.append(Option(Text(f"    … {len(sessions) - len(shown)} more", style="dim italic"),
@@ -621,7 +637,13 @@ class CSM(App[Session | None]):
         self.update_status(len(visible))
 
     def update_status(self, count: int) -> None:
-        self.query_one(Activity).set_busy(sum(1 for v in self.live.values() if v.status != "idle"))
+        busy = sum(1 for v in self.live.values() if v.status != "idle")
+        self.query_one(Activity).set_busy(busy)
+        if busy:
+            self.pulse_timer.resume()
+        else:
+            self.pulse_timer.pause()
+            self.pulse_on = True
         parts = [f"{count} sessions", f"{len(self.live)} live"]
         if self.permission:
             parts.append(f"{len(self.permission)} need permission")
