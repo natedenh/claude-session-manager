@@ -28,6 +28,7 @@ from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session
 from .launch import Launch, Pending
+from .viewer import Viewer
 from .worktrees import Worktrees
 
 PER_PROJECT = 5
@@ -72,6 +73,7 @@ HELP = """\
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
   E         export to Markdown (marked, or highlighted)
+  t         read the whole transcript (/ search, n N next / previous, g G top / bottom)
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
   ctrl+r    reload
@@ -227,6 +229,7 @@ class CSM(App[Session | None]):
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
         Binding("ctrl+r", "reload", "Reload", show=False),
+        Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("question_mark", "help", "Help"),
@@ -704,6 +707,10 @@ class CSM(App[Session | None]):
 
     def action_costs(self) -> None:
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
+
+    def action_transcript(self) -> None:
+        if (s := self.selected()) is not None:
+            self.push_screen(Viewer(s, self.current_theme.dark))
 
     def action_worktrees(self) -> None:
         self.push_screen(Worktrees(self.paths, self.sessions, self.live, Confirm))
