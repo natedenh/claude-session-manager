@@ -5,6 +5,7 @@ Only `git worktree remove` (never --force) and `git worktree prune` are used; br
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable, Iterable
@@ -54,6 +55,17 @@ def git(args: list[str], cwd: str) -> subprocess.CompletedProcess | None:
         return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def repo_state(path: str) -> tuple[int, int, int] | None:
+    """(uncommitted files, commits ahead of upstream, behind) for a checkout; None if it isn't one."""
+    r = git(["status", "--porcelain=v1", "--branch"], path)
+    if not r or r.returncode != 0:
+        return None
+    head, *files = r.stdout.splitlines() or [""]
+    ahead = re.search(r"ahead (\d+)", head)
+    behind = re.search(r"behind (\d+)", head)
+    return len(files), int(ahead.group(1)) if ahead else 0, int(behind.group(1)) if behind else 0
 
 
 def real(path: str) -> str:

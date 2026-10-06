@@ -25,7 +25,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux
+from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux, worktrees
 from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session, normalize_tags
@@ -98,9 +98,19 @@ HELP = """\
 [b]Icons[/b]
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [warn]●[/] live, busy   » shown beside the list
+  on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
   bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
+
+
+def git_flags(st: tuple[int, int, int] | None) -> Text:
+    """±uncommitted files, ↑commits to push, ↓commits to pull, after a project's name."""
+    if not st:
+        return Text()
+    dirty, ahead, behind = st
+    return Text.assemble(*[("  " + t, style) for t, style, n in
+                           ((f"±{dirty}", "warn", dirty), (f"↑{ahead}", "cyan", ahead), (f"↓{behind}", "dim", behind)) if n])
 
 
 def pr_style(st: prs.PRStatus | None) -> str:
@@ -372,6 +382,7 @@ class CSM(App[Session | None]):
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
         self.shown_id: str | None = None
         self.shown_ids: list[str] = []  # every session visible beside the list
+        self.git_state: dict[str, tuple[int, int, int]] = {}  # project: (uncommitted, ahead, behind)
         self.paths = paths or data.Paths()
         self.digests = summary.Digests(self.paths.summaries)
         self.said: dict[tuple[str, float], str | None] = {}  # (id, mtime) -> end of last assistant message
@@ -464,6 +475,19 @@ class CSM(App[Session | None]):
             self.rebuild()
             self.refresh_prs()
             self.refresh_summaries()
+        self.refresh_git()
+
+    @work(thread=True, exclusive=True, group="git")
+    def refresh_git(self) -> None:
+        """Uncommitted and unpushed counts for each project's checkout, shown on its header."""
+        projects = {s.project for s in self.sessions if s.project}
+        state = {p: st for p in projects if os.path.isdir(p) and (st := worktrees.repo_state(p))}
+        self.call_from_thread(self.set_git_state, state)
+
+    def set_git_state(self, state: dict[str, tuple[int, int, int]]) -> None:
+        if state != self.git_state:
+            self.git_state = state
+            self.rebuild()
 
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
@@ -693,8 +717,8 @@ class CSM(App[Session | None]):
                 options.append(Option("", disabled=True))
             if name:
                 options.append(Option(Text.assemble(
-                    ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(new)}", "dim")),
-                    id=f"p:{project}"))
+                    ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(new)}", "dim"),
+                    git_flags(self.git_state.get(project))), id=f"p:{project}"))
             for p in [] if collapsed else new:
                 options.append(Option(self.pending_row(p), id=f"s:{p.id}"))
             for s in shown:

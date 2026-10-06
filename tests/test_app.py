@@ -151,7 +151,7 @@ async def test_open_in_ghostty_scripts_running_app(sessions, monkeypatch):
         await settle(pilot)
         await pilot.press("o")
         await settle(pilot)
-    [(argv, kw)] = calls
+    [(argv, kw)] = [c for c in calls if c[0][0] == "osascript"]  # project headers also run git status
     assert argv[:2] == ["osascript", "-"] and argv[3:] == ["/bin/claude -r b1", "tab"]
     assert argv[2].endswith("/beta") and "new tab in front window" in kw["input"]
 
@@ -676,3 +676,18 @@ async def test_rows_open_beside_the_list_get_a_soft_background(sessions):
             return list(strip)[-1].style.bgcolor
         assert row_bg("a2") == open_bg and row_bg("a1") == open_bg
         assert row_bg("b1") != open_bg  # b1 has the cursor; it keeps the cursor's own style path
+
+
+async def test_project_header_shows_uncommitted_and_unpushed(sessions, monkeypatch):
+    monkeypatch.setattr("csm.app.worktrees.repo_state", lambda p: (3, 2, 0) if p.endswith("beta") else None)
+    for d in ("alpha", "beta"):
+        (sessions.projects.parent / d).mkdir(exist_ok=True)
+    app = CSM(sessions)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        await settle(pilot)
+        headers_text = [o.prompt.plain for o in app.query_one(SessionList).options if o.id and o.id.startswith("p:")]
+        beta = next(h for h in headers_text if "beta" in h)
+        alpha = next(h for h in headers_text if "alpha" in h)
+        assert "±3" in beta and "↑2" in beta and "↓" not in beta
+        assert "±" not in alpha

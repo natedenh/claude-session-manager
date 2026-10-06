@@ -173,3 +173,23 @@ async def test_d_confirms_then_removes(paths, write, repo):
         await app.workers.wait_for_complete()
         assert not wt.exists()
         assert app.screen.items == {}
+
+
+def test_repo_state_counts_uncommitted_and_unpushed(tmp_path):
+    import subprocess
+    from csm.worktrees import repo_state
+    def g(*a, cwd):
+        subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)
+    up, clone = tmp_path / "up", tmp_path / "clone"
+    g("init", "-q", "--bare", "-b", "main", str(up), cwd=tmp_path)
+    g("clone", "-q", str(up), str(clone), cwd=tmp_path)
+    for i in range(2):
+        (clone / f"f{i}").write_text("x")
+        g("add", ".", cwd=clone)
+        g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", f"c{i}", cwd=clone)
+        if i == 0:
+            g("push", "-q", "origin", "main", cwd=clone)
+    (clone / "dirty").write_text("x")
+    (clone / "f0").write_text("changed")
+    assert repo_state(str(clone)) == (2, 1, 0)
+    assert repo_state(str(tmp_path)) is None
