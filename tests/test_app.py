@@ -548,3 +548,27 @@ async def test_archive_made_outside_csm_is_picked_up_and_kept(sessions):
         assert "s:a1" not in ids(app)
         await pilot.press("asterisk")  # pinning b1 must not undo the outside archive
         assert data.State(sessions.state).archived == {"a1"}
+
+
+def row_text(app, sid):
+    return app.query_one(SessionList).get_option(f"s:{sid}").prompt.plain
+
+
+async def test_pane_attached_to_background_job_counts_as_showing_the_job(sessions):
+    for n, d in enumerate([{"sessionId": "a2", "kind": "interactive", "parkedJobId": "j1", "tmux": "csm:@0.%3"},
+                           {"sessionId": "b1", "kind": "bg", "jobId": "j1"}]):
+        (sessions.live / f"{n}.json").write_text(json.dumps({"pid": os.getpid(), "status": "idle", **d}))
+    host = FakeHost()
+    host.panes, host.also = {"a2": "%3"}, ["a2"]
+    app = CSM(sessions, host=host)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        app.poll_live()
+        await pilot.pause()
+        assert row_text(app, "b1").startswith("▶") and "bg" in row_text(app, "b1")
+        assert row_text(app, "a2").startswith("⇢")
+        meta = [getattr(r, "plain", "") for r in app.meta(app.by_id["b1"]).renderables]
+        assert "idle in the background" in " ".join(meta) and "  attached in tmux pane %3" in meta
+        await pilot.press("enter")  # b1, the job: bring up the pane showing it, not a second resume
+        await settle(pilot)
+        assert host.calls[-1][:2] == ("show", "a2")

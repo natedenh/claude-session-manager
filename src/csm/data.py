@@ -88,6 +88,10 @@ class LiveSession:
     name: str | None = None
     cwd: str | None = None
     host_session_id: str | None = None  # the desktop app's own id for the session
+    kind: str = ""  # "interactive", "bg" (a background job), ...
+    job_id: str | None = None  # a background job's id
+    parked_job_id: str | None = None  # the background job this terminal is attached to
+    tmux: str | None = None  # "session:@window.%pane" when it runs in tmux
 
 
 @dataclass
@@ -326,9 +330,21 @@ def load_live(paths: Paths) -> dict[str, LiveSession]:
             live[d["sessionId"]] = LiveSession(
                 pid=pid, session_id=d["sessionId"], status=d.get("status") or "running",
                 entrypoint=d.get("entrypoint") or d.get("kind") or "", name=d.get("name"), cwd=d.get("cwd"),
-                host_session_id=d.get("hostSessionId"),
+                host_session_id=d.get("hostSessionId"), kind=d.get("kind") or "", job_id=d.get("jobId"),
+                parked_job_id=d.get("parkedJobId"), tmux=d.get("tmux"),
             )
     return live
+
+
+def viewers(live: dict[str, LiveSession]) -> dict[str, str]:
+    """{background session id: id of the terminal session attached to it}.
+
+    `claude` can move a conversation into a background job and keep showing it; that
+    terminal's process still carries its original session id, so a pane tagged with that
+    id is really showing the job.
+    """
+    jobs = {v.job_id: k for k, v in live.items() if v.job_id}
+    return {jobs[v.parked_job_id]: k for k, v in live.items() if v.parked_job_id in jobs}
 
 
 def transcript(path: str | Path, limit: int = 30, tail_bytes: int = 4_000_000) -> list[Message]:

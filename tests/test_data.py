@@ -221,3 +221,11 @@ def test_state_reload_picks_up_outside_edits_and_keeps_unsaved(tmp_path):
     assert st.reload()
     assert st.archived == {"x"} and st.flat and st.pinned == {"p"}
     assert not st.reload()
+
+
+def test_viewers_map_background_jobs_to_attached_terminals():
+    live = {"t": data.LiveSession(1, "t", "idle", "cli", kind="interactive", parked_job_id="j1"),
+            "b": data.LiveSession(2, "b", "busy", "cli", kind="bg", job_id="j1"),
+            "lone": data.LiveSession(3, "lone", "idle", "cli", kind="bg", job_id="j2"),
+            "gone": data.LiveSession(4, "gone", "idle", "cli", parked_job_id="j9")}
+    assert data.viewers(live) == {"b": "t"}

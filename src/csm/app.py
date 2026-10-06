@@ -97,6 +97,7 @@ HELP = """\
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [warn]●[/] live, busy   ▶ shown beside the list
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
+  bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
 
 
@@ -431,7 +432,8 @@ class CSM(App[Session | None]):
         self.track_hooks(live)
         self.track(live)
         if (changed or (set(self.waiting), self.permission) != before
-                or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}):
+                or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}
+                or data.viewers(live) != self.viewers):
             self.live = live
             self.rebuild()
 
@@ -514,7 +516,20 @@ class CSM(App[Session | None]):
         """Working, waiting on you, or open beside the list: shown even when archived."""
         live = self.live.get(s.id)
         return bool(live and live.status != "idle") or s.id in self.waiting or s.id in self.permission \
-            or s.id in self.shown_ids
+            or self.displayed(s.id)
+
+    @property
+    def viewers(self) -> dict[str, str]:
+        """{background session id: terminal session attached to it}."""
+        return data.viewers(self.live)
+
+    def displayed(self, sid: str) -> bool:
+        """Beside the list, directly or through a terminal attached to its background job."""
+        return sid in self.shown_ids or self.viewers.get(sid, "") in self.shown_ids
+
+    def viewing(self, sid: str) -> str | None:
+        """The background session this terminal session is attached to, if any."""
+        return next((bg for bg, v in self.viewers.items() if v == sid), None)
 
     @staticmethod
     def grouped(sessions: list[Session]) -> dict[str, list[Session]]:
@@ -561,7 +576,8 @@ class CSM(App[Session | None]):
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting or s.id in self.permission else ""
         fork = self.fork_tag(s)
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
-        return Text.assemble(mark, dot, icon, (s.title, title), fork, context_flag(s), tags, project)
+        bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
+        return Text.assemble(mark, dot, icon, (s.title, title), fork, bg, context_flag(s), tags, project)
 
     def fork_tag(self, s: Session) -> Text:
         """Forks copy their original's title; when both are listed, say which is which."""
@@ -574,7 +590,9 @@ class CSM(App[Session | None]):
         return any(x.forked_from == s.id for x in self.sessions)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
-        if s.id in self.shown_ids:
+        if self.viewing(s.id):  # only a window onto a background job; that job's row carries the state
+            return "⇢ ", "dim"
+        if self.displayed(s.id):
             return "▶ ", style
         if s.id in self.permission:
             return "? ", "bold red"
@@ -805,9 +823,17 @@ class CSM(App[Session | None]):
         lines.append(Text("  ·  ".join(info), style="dim"))
         if ctx := context_line(s):
             lines.append(ctx)
-        if live := self.live.get(s.id):
+        if bg := self.viewing(s.id):
+            job = self.by_id.get(bg)
+            lines.append(Text(f"⇢ showing background job “{job.title if job else bg[:8]}”", style="dim"))
+        elif live := self.live.get(s.id):
+            where = "the background" if live.kind == "bg" else live.entrypoint or "claude"
             lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
-                                       f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
+                                       f"{live.status} in {where} (pid {live.pid})"))
+            if live.kind == "bg":
+                v = self.live.get(self.viewers.get(s.id, ""))
+                lines.append(Text(f"  attached in tmux pane {v.tmux.rsplit('.', 1)[-1]}" if v and v.tmux
+                                  else "  attached to a terminal" if v else "  no terminal attached", style="dim"))
         if s.id in self.permission:
             lines.append(Text(f"? needs permission: {self.permission[s.id]}", style="bold red"))
         elif s.id in self.waiting:
@@ -981,6 +1007,9 @@ class CSM(App[Session | None]):
     def resume_flow(self, s: Session) -> None:
         if s.id in self.hosted:
             self.call_from_thread(self.start, s)
+            return
+        if (v := self.viewers.get(s.id)) in self.hosted:  # a csm pane is showing this background job
+            self.call_from_thread(self.start_launch, launch.resume(v, s.cwd, s.title))
             return
         live = self.live.get(s.id)
         if live and ghostty.running():
