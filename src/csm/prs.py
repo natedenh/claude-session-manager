@@ -6,6 +6,7 @@ minutes; merged and closed ones are final, so they're only re-checked daily.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -29,6 +30,7 @@ class PRStatus:
     passed: int
     total: int
     fetched_at: float = 0.0
+    merged_at: float | None = None
 
     @property
     def final(self) -> bool:
@@ -50,6 +52,13 @@ def check_result(c: dict) -> str:
     return "passing" if conclusion in OK_CONCLUSIONS else "failing" if conclusion in BAD_CONCLUSIONS else "pending"
 
 
+def merge_time(value) -> float | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return None
+
+
 def parse(payload: dict, now: float | None = None) -> PRStatus:
     raw = (payload.get("state") or "").upper()
     state = ("merged" if raw == "MERGED" or payload.get("mergedAt") else "closed" if raw == "CLOSED"
@@ -58,7 +67,8 @@ def parse(payload: dict, now: float | None = None) -> PRStatus:
     checks = ("none" if not results else "failing" if "failing" in results
               else "pending" if "pending" in results else "passing")
     return PRStatus(state, checks, REVIEWS.get(payload.get("reviewDecision") or ""),
-                    results.count("passing"), len(results), now or time.time())
+                    results.count("passing"), len(results), now or time.time(),
+                    merge_time(payload.get("mergedAt")) if state == "merged" else None)
 
 
 def fetch(pr_url: str) -> PRStatus | None:

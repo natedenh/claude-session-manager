@@ -47,6 +47,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `g` | open the session's PR in the browser |
 | `.` | open the project directory in your editor: `$CSM_EDITOR`, else `code`, else `cursor`, else Finder |
 | `D` | open the session in Claude desktop, even if it isn't running there (needs the app to know the session) |
+| `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app). On an auto-archived session it keeps the session instead |
+| `A` | auto-archive settings (see below) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
@@ -68,6 +70,10 @@ Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree
 ## PR status
 
 For sessions linked to a pull request, csm asks `gh pr view` for its state, checks and review decision in the background (one PR at a time, newest session first) and colors the `⇄` icon: green is open with checks passing, yellow is checks pending or review required, red is checks failing or changes requested, magenta is merged, dim is closed or draft. The preview header shows the details, e.g. `open · checks 12/12 passing · approved`. Results are cached in `~/.cache/csm/prs.json`: open PRs refresh after 5 minutes, merged and closed ones at most daily. If `gh` is missing or not logged in, the icon stays plain green.
+
+## Auto-archive
+
+Off by default. `A` opens a dialog to turn on a rule that hides a session once its PR merged more than N days ago (default 7) or it has had no activity for N days (default 30). Live, pinned and kept sessions are never hidden. The rule is derived each time, not written into the archive: auto-archived sessions show dimmed with `a` and say why ("auto: PR merged 9d ago"), and the status bar counts them. `x` on one keeps it (the rule stops hiding it); `x` again archives it normally. The rule and kept ids are stored in `state.json`.
 
 ## Worktree cleanup
 
