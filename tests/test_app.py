@@ -365,7 +365,7 @@ async def test_pin_moves_to_pinned_group_and_persists(sessions):
     async with app.run_test() as pilot:
         await settle(pilot)
         assert ids(app) == ["s:a1", "s:b1", "s:a2"]
-        assert "alpha" in str(app.query_one(SessionList).options[1].prompt)
+        assert "alpha" in str(app.query_one(SessionList).options[3].prompt)  # after the Summary row and its spacer
         await pilot.press("asterisk")  # the pinned session is highlighted first
         assert ids(app) == ["s:b1", "s:a2", "s:a1"]
 
@@ -388,7 +388,7 @@ async def test_flat_view_order_and_persistence(sessions):
         await pilot.press("v")
         assert headers(app) == []
         assert ids(app) == ["s:b1", "s:a2", "s:a1"]
-        assert "beta" in str(app.query_one(SessionList).options[0].prompt)
+        assert "beta" in str(app.query_one(SessionList).options[2].prompt)
         goto(app, "a2")
         await pilot.press("asterisk", "right_square_bracket")  # jump is harmless
         assert ids(app) == ["s:a2", "s:b1", "s:a1"]

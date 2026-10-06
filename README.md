@@ -72,6 +72,12 @@ Forks are marked `⑃`, and the preview says which session they came from. A for
 
 Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks every session shown beside the list. `◆` means it finished a turn and is waiting for you; a red `?` means it needs permission (needs the hooks below). Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
 
+## Summary
+
+The `◎ Summary` row at the top of the list (or `S` from anywhere) covers the last 48 hours across all sessions: **Needs you** (the question each waiting session ended on, and permission requests), **Decisions**, **Finished** work, and what's **Still running**. In the summary screen, `enter` opens the session an item came from.
+
+Each recently active session that has settled (idle, unchanged for a minute) is summarized by Claude Haiku 4.5 from its last 16 turns, one session at a time in the background, and cached in `~/.cache/csm/summaries.json` until its transcript changes. csm calls Claude the way Claude Code is configured to: when `~/.claude/settings.json` sets `CLAUDE_CODE_USE_BEDROCK`, it uses Bedrock with that file's `AWS_PROFILE`, `AWS_REGION` and `ANTHROPIC_DEFAULT_HAIKU_MODEL`; otherwise the Anthropic API. `CSM_SUMMARY_MODEL` overrides the model. If a call fails (for example an expired SSO login), the page says so and csm retries after 5 minutes. Without summaries, "Needs you" still works from each session's last message.
+
 ## PR status
 
 For sessions linked to a pull request, csm asks `gh pr view` for its state, checks and review decision in the background (one PR at a time, newest session first) and colors the `⇄` icon: green is open with checks passing, yellow is checks pending or review required, red is checks failing or changes requested, magenta is merged, dim is closed or draft. The preview header shows the details, e.g. `open · checks 12/12 passing · approved`. Results are cached in `~/.cache/csm/prs.json`: open PRs refresh after 5 minutes, merged and closed ones at most daily. If `gh` is missing or not logged in, the icon stays plain green.

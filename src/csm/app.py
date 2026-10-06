@@ -24,7 +24,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, Switch
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, tmux
+from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux
 from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session, normalize_tags
@@ -51,6 +51,7 @@ HELP = """\
 [b]Navigate[/b]
   ↑↓ j k    move                          [ ]       previous / next project
   enter     open a session; on a project header, collapse / expand it
+  S         summary of the last 48 hours: questions waiting on you, decisions, finished work
   e         show every session (5 per project otherwise)
   v         flat newest-first list / grouped by project
 
@@ -309,6 +310,7 @@ class CSM(App[Session | None]):
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("W", "worktrees", "Worktrees", show=False),
+        Binding("S", "summary", "Summary", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -324,6 +326,8 @@ class CSM(App[Session | None]):
         self.shown_id: str | None = None
         self.shown_ids: list[str] = []  # every session visible beside the list
         self.paths = paths or data.Paths()
+        self.digests = summary.Digests(self.paths.summaries)
+        self.said: dict[tuple[str, float], str | None] = {}  # (id, mtime) -> end of last assistant message
         self.focus_id = focus_id
         self.state = data.State(self.paths.state)
         self.sessions: list[Session] = []
@@ -371,6 +375,7 @@ class CSM(App[Session | None]):
         self.set_interval(2, self.poll_live)
         self.set_interval(20, self.load)
         self.set_interval(60, self.refresh_prs)
+        self.set_interval(120, self.refresh_summaries)
 
     # ---- loading ---------------------------------------------------------
 
@@ -403,6 +408,7 @@ class CSM(App[Session | None]):
             self.loaded = True
             self.rebuild()
             self.refresh_prs()
+            self.refresh_summaries()
 
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
@@ -569,6 +575,8 @@ class CSM(App[Session | None]):
                 return []
             return [p for ps in pending.values() for p in ps] if key == "" else pending.get(key, [])
         options: list[Option | None] = []
+        if not self.narrowed:
+            options.append(Option(self.summary_row(), id="S:summary"))  # groups add their own spacer
         self.by_id = {}
         for project, name, sessions, cap, with_project in sections:
             new = pending_for(project)
@@ -629,12 +637,17 @@ class CSM(App[Session | None]):
 
     @on(OptionList.OptionHighlighted)
     def highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        self.show(self.selected())
+        if event.option.id == "S:summary":
+            self.show_summary()
+        else:
+            self.show(self.selected())
 
     @on(OptionList.OptionSelected)
     def chosen(self, event: OptionList.OptionSelected) -> None:
         kind, key = event.option.id[:2], event.option.id[2:]
-        if kind == "p:":
+        if kind == "S:":
+            self.action_summary()
+        elif kind == "p:":
             self.state.collapsed ^= {key}
             self.state.save()
             self.rebuild()
@@ -645,6 +658,57 @@ class CSM(App[Session | None]):
             self.start_launch(p.launch)
         elif s := self.by_id.get(key):
             self.resume(s)
+
+    # ---- summary ---------------------------------------------------------
+
+    @work(thread=True, exclusive=True, group="summaries")
+    def refresh_summaries(self) -> None:
+        worker = get_current_worker()
+        hidden = {s.id for s in self.sessions if self.archived_by(s)}
+        digests = summary.refresh(self.paths, [s for s in self.sessions if s.id not in hidden], dict(self.live),
+                                  cancelled=lambda: worker.is_cancelled)
+        if not worker.is_cancelled:
+            self.call_from_thread(self.set_digests, digests)
+
+    def set_digests(self, digests: summary.Digests) -> None:
+        self.digests = digests
+        self.rebuild()
+        opt = self.query_one(SessionList).highlighted_option
+        if opt and opt.id == "S:summary":
+            self.show_summary()
+
+    def summary_page(self) -> summary.Page:
+        return summary.build(self.sessions, self.live, self.waiting, self.permission, self.digests,
+                             self.last_said, hidden=lambda s: bool(self.archived_by(s)))
+
+    def last_said(self, s: Session) -> str | None:
+        """The end of the session's last assistant message: usually the question it's waiting on."""
+        key = (s.id, s.mtime)
+        if key not in self.said:
+            try:
+                text = next((m.text for m in reversed(data.transcript(s.path, limit=6)) if m.role == "assistant"), "")
+            except OSError:
+                text = ""
+            last = [p for p in text.strip().split("\n\n") if p.strip()][-1:] or [""]
+            line = " ".join(last[0].split())
+            self.said[key] = (line[:157] + "…") if len(line) > 160 else line or None
+        return self.said[key]
+
+    def summary_row(self) -> Text:
+        return Text.assemble(("◎ ", "bold cyan"), ("Summary", "bold"), (f"  {summary.counts(self.summary_page())}", "dim"))
+
+    def show_summary(self) -> None:
+        self.query_one("#meta", Static).update("")
+        self.query_one("#messages", Static).update(summary.render(self.summary_page(), ago))
+        self.query_one("#transcript", VerticalScroll).scroll_home(animate=False)
+
+    def action_summary(self) -> None:
+        def done(s: Session | None) -> None:
+            if s:
+                self.focus_id = s.id
+                self.rebuild()
+                self.resume(s)
+        self.push_screen(summary.screen(self.summary_page(), ago), done)
 
     # ---- preview ---------------------------------------------------------
 

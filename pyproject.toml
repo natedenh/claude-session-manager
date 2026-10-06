@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Terminal UI for browsing, searching and resuming Claude Code sessions"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["textual>=3"]
+dependencies = [
+    "anthropic[bedrock]>=1.11.0",
+    "textual>=3",
+]
 
 [project.scripts]
 csm = "csm.app:main"
