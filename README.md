@@ -44,6 +44,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
+| `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `?` | help |
 
 Icons: green `⇄` PR linked, magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.

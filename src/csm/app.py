@@ -26,6 +26,7 @@ from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from . import data, desktop, ghostty, tmux
+from .costs import Costs
 from .data import LiveSession, Message, Session
 
 PER_PROJECT = 5
@@ -64,6 +65,7 @@ HELP = """\
   o / O        resume in a new Ghostty tab / window
   r            rename                   x        archive / unarchive
   y            copy session id          d        move transcript to the Trash
+  $            costs: totals, by project, by week, top sessions
   ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
 
 [b]Icons[/b]
@@ -183,6 +185,7 @@ class CSM(App[Session | None]):
         Binding("left_square_bracket", "jump(-1)", "Prev project", show=False),
         Binding("escape", "clear", "Clear", show=False),
         Binding("ctrl+r", "reload", "Reload", show=False),
+        Binding("dollar_sign", "costs", "Costs"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -541,6 +544,9 @@ class CSM(App[Session | None]):
     def action_reload(self) -> None:
         self.load()
         self.notify("Reloading…", timeout=1)
+
+    def action_costs(self) -> None:
+        self.push_screen(Costs(self.sessions, self.archived_by, ago))
 
     def action_help(self) -> None:
         self.push_screen(Help())
