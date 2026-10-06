@@ -24,7 +24,7 @@ def assistant(content, cwd):
 @pytest.fixture
 def paths(tmp_path):
     p = data.Paths(claude=tmp_path / "claude", cache=tmp_path / "cache.json", prs=tmp_path / "prs.json",
-                   state=tmp_path / "state.json", trash=tmp_path / "Trash", export=tmp_path / "export", desktop=tmp_path / "desktop")
+                   state=tmp_path / "state.json", status=tmp_path / "status", trash=tmp_path / "Trash", export=tmp_path / "export", desktop=tmp_path / "desktop")
     p.projects.mkdir(parents=True)
     p.live.mkdir()
     return p

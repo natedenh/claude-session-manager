@@ -58,7 +58,7 @@ While any session is working, a wave moves along the bottom of the list next to 
 
 Forks are marked `⑃`, and the preview says which session they came from. A fork copies its original's conversation, title included, so csm links them by their shared first record.
 
-Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
+Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. `◆` means it finished a turn and is waiting for you; a red `?` means it needs permission (needs the hooks below). Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
 
 ## PR status
 
@@ -67,6 +67,23 @@ For sessions linked to a pull request, csm asks `gh pr view` for its state, chec
 ## Worktree cleanup
 
 `W` lists every worktree under `<project>/.claude/worktrees/` for the projects csm knows, confirmed against what git has registered. Each row shows its branch, the sessions that used it, last activity, PR state (from the cache above), uncommitted files and commits not on any remote branch. Worktrees whose PR is merged or closed, or that saw no session activity for 14+ days, are flagged and sorted first; ones with a running session never are. `d` or `x` removes the selected one after a confirmation that warns about uncommitted or unpushed work. It runs plain `git worktree remove` (never `--force`), so git refuses a dirty worktree and csm shows its message. Registered worktrees whose directory is gone show as `missing`, and removing one runs `git worktree prune`. Branches are never deleted.
+
+## Hooks (optional)
+
+By default csm infers "waiting" from a session's busy-to-idle change, which can't tell a finished turn from a permission prompt. Claude Code hooks can. `csm hooks install` adds four entries to `~/.claude/settings.json` (`--settings PATH` for another file):
+
+```json
+{"hooks": {
+  "Notification":     [{"hooks": [{"type": "command", "command": "<python> -m csm hook"}]}],
+  "Stop":             [{"hooks": [{"type": "command", "command": "<python> -m csm hook"}]}],
+  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "<python> -m csm hook"}]}],
+  "SessionEnd":       [{"hooks": [{"type": "command", "command": "<python> -m csm hook"}]}]
+}}
+```
+
+It shows the changes and asks first (`--yes` skips the question), leaves your other hooks and settings alone, backs the file up as `settings.json.bak-csm-<timestamp>`, and does nothing if the entries are already there. `csm hooks uninstall` removes only entries whose command contains `csm hook`; `csm hooks status` shows what's installed. Already-running sessions pick up new hooks only after they restart.
+
+The hook writes `~/.local/state/csm/status/<session id>.json` (removed at session end) and prints nothing. With it, a session asking for permission gets a red `?` (the preview shows what it asked for, the status bar says "N need permission", `!` includes it, and a notification says "<title> needs permission"), and a finished turn is marked `◆` immediately. Opening the session clears the mark. Without hook files csm behaves as before.
 
 ## Data
 

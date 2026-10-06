@@ -5,6 +5,7 @@ import argparse
 import os
 import signal
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -23,7 +24,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import data, desktop, export, ghostty, launch, notify, prs, tmux
+from . import data, desktop, export, ghostty, hooks, launch, notify, prs, tmux
 from .activity import Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session
@@ -79,7 +80,7 @@ HELP = """\
 
 [b]Icons[/b]
   [green]⇄[/] PR linked: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list   ◆ waiting for you
+  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)
 """
 
 
@@ -249,6 +250,10 @@ class CSM(App[Session | None]):
         self.live: dict[str, LiveSession] = {}
         self.notifications = notifications
         self.waiting: set[str] = set()  # finished a turn since you last opened them; memory only
+        self.permission: dict[str, str] = {}  # from hooks: session id -> what it's asking for
+        self.hook_waiting: set[str] = set()
+        self.hook_notified: dict[str, float] = {}
+        self.hook_seen: dict[str, float] = {}  # hook file time already dealt with (opened)
         self.last_status: dict[str, str] | None = None
         self.filters: set[str] = {"archived"} if show_archived else set()
         self.query_text = ""
@@ -322,9 +327,10 @@ class CSM(App[Session | None]):
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
-        before = set(self.waiting)
+        before = set(self.waiting), dict(self.permission)
+        self.track_hooks(live)
         self.track(live)
-        if (changed or self.waiting != before
+        if (changed or (set(self.waiting), self.permission) != before
                 or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}):
             self.live = live
             self.rebuild()
@@ -332,14 +338,31 @@ class CSM(App[Session | None]):
     def track(self, live: dict[str, LiveSession]) -> None:
         """Mark sessions that went from working to idle as waiting. The first call has no history."""
         prev, self.last_status = self.last_status, {k: v.status for k, v in live.items()}
-        self.waiting &= {k for k, v in live.items() if v.status == "idle"}
+        self.waiting &= {k for k, v in live.items() if v.status == "idle"} | self.hook_waiting
         for sid, now in self.last_status.items():
-            if prev is None or now != "idle" or prev.get(sid, "idle") == "idle":
+            if prev is None or now != "idle" or prev.get(sid, "idle") == "idle" or sid in self.waiting:
                 continue
             self.waiting.add(sid)
             if self.notifications and sid != self.shown_id:
                 title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
                 self.send_notification(f"{title} is waiting")
+
+    def track_hooks(self, live: dict[str, LiveSession]) -> None:
+        """Apply states written by `csm hook`. Opening a session ignores its file until a newer one."""
+        self.permission, self.hook_waiting = {}, set()
+        for sid, h in hooks.load_status(self.paths.status).items():
+            if sid not in live or h["at"] <= self.hook_seen.get(sid, 0) or h["state"] == "working":
+                continue
+            perm = h["state"] == "permission"
+            if perm:
+                self.permission[sid] = h.get("message") or "permission"
+            else:
+                self.hook_waiting.add(sid)
+                self.waiting.add(sid)
+            if self.notifications and sid != self.shown_id and self.hook_notified.get(sid, 0) < h["at"]:
+                title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
+                self.send_notification(f"{title} needs permission" if perm else f"{title} is waiting")
+            self.hook_notified[sid] = h["at"]
 
     @work(thread=True, group="notify")
     def send_notification(self, message: str) -> None:
@@ -374,7 +397,7 @@ class CSM(App[Session | None]):
                 continue
             if "live" in self.filters and s.id not in self.live:
                 continue
-            if "waiting" in self.filters and s.id not in self.waiting:
+            if "waiting" in self.filters and s.id not in self.waiting and s.id not in self.permission:
                 continue
             if self.hits is not None and s.id not in self.hits:
                 continue
@@ -421,13 +444,15 @@ class CSM(App[Session | None]):
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = self.marker(s, live, style)
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
-        title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
+        title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting or s.id in self.permission else ""
         fork = Text(" ⑃", style="dim") if s.forked_from else Text()
         return Text.assemble(mark, dot, icon, (s.title, title), fork, project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id == self.shown_id:
             return "▶ ", style
+        if s.id in self.permission:
+            return "? ", "bold red"
         if s.id in self.waiting:
             return "◆ ", "bold " + style
         return ("● " if live else "  "), style
@@ -491,6 +516,8 @@ class CSM(App[Session | None]):
     def update_status(self, count: int) -> None:
         self.query_one(Activity).set_busy(sum(1 for v in self.live.values() if v.status != "idle"))
         parts = [f"{count} sessions", f"{len(self.live)} live"]
+        if self.permission:
+            parts.append(f"{len(self.permission)} need permission")
         if self.waiting:
             parts.append(f"{len(self.waiting)} waiting")
         if only := sorted(self.filters - {"archived"}):
@@ -560,7 +587,9 @@ class CSM(App[Session | None]):
         if live := self.live.get(s.id):
             lines.append(Text.assemble(("● ", STATUS_STYLE.get(live.status, "cyan")),
                                        f"{live.status} in {live.entrypoint or 'claude'} (pid {live.pid})"))
-        if s.id in self.waiting:
+        if s.id in self.permission:
+            lines.append(Text(f"? needs permission: {self.permission[s.id]}", style="bold red"))
+        elif s.id in self.waiting:
             lines.append(Text("◆ waiting for you", style="bold"))
         if s.pr_url:
             st = self.pr_status.get(s.pr_url)
@@ -714,8 +743,8 @@ class CSM(App[Session | None]):
     # ---- actions on a session --------------------------------------------
 
     def resume(self, s: Session) -> None:
-        if s.id in self.waiting:
-            self.waiting.discard(s.id)
+        if s.id in self.waiting or s.id in self.permission:
+            self.clear_attention(s.id)
             self.rebuild()
         self.resume_flow(s)
 
@@ -750,8 +779,15 @@ class CSM(App[Session | None]):
     def start(self, s: Session) -> None:
         self.start_launch(launch.resume(s.id, s.cwd, s.title))
 
+    def clear_attention(self, sid: str) -> None:
+        self.waiting.discard(sid)
+        self.permission.pop(sid, None)
+        if sid in self.hook_notified:
+            self.hook_seen[sid] = self.hook_notified[sid]
+        self.hook_waiting.discard(sid)
+
     def start_launch(self, l: Launch) -> None:
-        self.waiting.discard(l.focus_id)
+        self.clear_attention(l.focus_id)
         if not self.host:
             self.exit(l)
             return
@@ -939,6 +975,8 @@ class CSM(App[Session | None]):
 
 
 def main() -> None:
+    if (code := hooks.dispatch(sys.argv[1:])) is not None:
+        sys.exit(code)
     ap = argparse.ArgumentParser(prog="csm", description=__doc__)
     ap.add_argument("--no-tmux", action="store_true",
                     help="don't use tmux; resume sessions in this terminal and return to the list after")
