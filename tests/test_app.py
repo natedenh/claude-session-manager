@@ -326,7 +326,8 @@ async def test_fork_builds_command(sessions, tmp_path):
         await pilot.press("f")  # b1, the first session
         await settle(pilot)
         [(_, new_id, command)] = host.calls
-        assert command.endswith(f"-r b1 --fork-session --session-id {new_id}") and new_id != "b1"
+        assert command.endswith(f"-r b1 --fork-session --session-id {new_id} --name 'Beta setup (fork)'")
+        assert new_id != "b1"
         assert host.cwds[new_id] == str(tmp_path / "beta")
         assert "Fork of Beta setup" in app.query_one(SessionList).get_option(f"s:{new_id}").prompt.plain
 

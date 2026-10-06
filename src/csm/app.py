@@ -422,7 +422,8 @@ class CSM(App[Session | None]):
         dot = self.marker(s, live, style)
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
-        return Text.assemble(mark, dot, icon, (s.title, title), project)
+        fork = Text(" ⑃", style="dim") if s.forked_from else Text()
+        return Text.assemble(mark, dot, icon, (s.title, title), fork, project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id == self.shown_id:
@@ -540,6 +541,9 @@ class CSM(App[Session | None]):
 
     def meta(self, s: Session) -> Group:
         lines = [Text(s.title, style="bold")]
+        if s.forked_from:
+            parent = next((x for x in self.sessions if x.id == s.forked_from), None)
+            lines.append(Text(f"⑃ forked from {parent.title if parent else s.forked_from}", style="dim"))
         info = [s.project_name]
         if s.branch:
             info.append(s.branch)

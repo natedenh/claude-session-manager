@@ -159,3 +159,38 @@ def test_load_desktop_maps_cli_ids(paths):
     (d / "local_a.json").write_text(json.dumps({"sessionId": "local_a", "cliSessionId": "x", "isArchived": False}))
     os.utime(d / "local_a.json", (time.time() + 5,) * 2)
     assert not data.load_desktop(paths)["x"].archived
+
+
+def _fork_lines(cwd, sid_in_records):
+    return [rec(type="user", uuid="u1", sessionId=sid_in_records, cwd=cwd, message={"content": "hi"}),
+            rec(type="custom-title", customTitle="Same title")]
+
+
+def test_forks_link_to_the_session_named_in_copied_records(paths, write, tmp_path):
+    repo = str(tmp_path / "repo")
+    write(repo, "orig", *_fork_lines(repo, "orig"))
+    write(repo, "fork", *_fork_lines(repo, "orig"))  # copied records still carry the original's id
+    by = {s.id: s for s in data.load_sessions(paths)}
+    assert by["fork"].forked_from == "orig" and by["orig"].forked_from is None
+
+
+def test_forks_with_rewritten_ids_link_to_the_older_file(paths, write, tmp_path, monkeypatch):
+    repo = str(tmp_path / "repo")
+    write(repo, "old", *_fork_lines(repo, "old"))
+    write(repo, "new", *_fork_lines(repo, "new"))
+    real = data.parse_session
+
+    def parse(path):
+        s = real(path)
+        s.born = {"old": 1.0, "new": 2.0}[s.id]
+        return s
+    monkeypatch.setattr(data, "parse_session", parse)
+    by = {s.id: s for s in data.load_sessions(paths)}
+    assert by["new"].forked_from == "old" and by["old"].forked_from is None
+
+
+def test_unrelated_sessions_are_not_forks(paths, write, tmp_path):
+    repo = str(tmp_path / "repo")
+    write(repo, "a", rec(type="user", uuid="u1", sessionId="a", cwd=repo, message={"content": "one"}))
+    write(repo, "b", rec(type="user", uuid="u2", sessionId="b", cwd=repo, message={"content": "two"}))
+    assert all(s.forked_from is None for s in data.load_sessions(paths))

@@ -41,7 +41,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
 | `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists |
-| `f` | fork the highlighted session (`--fork-session`) |
+| `f` | fork the highlighted session (`--fork-session`), named "<title> (fork)" |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
@@ -55,6 +55,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `?` | help |
 
 While any session is working, a wave moves along the bottom of the list next to a count ("2 working"). When everything is idle, it rests as a flat line and stops redrawing.
+
+Forks are marked `⑃`, and the preview says which session they came from. A fork copies its original's conversation, title included, so csm links them by their shared first record.
 
 Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
 

@@ -44,5 +44,6 @@ def new(project: str, worktree: bool = False) -> Launch:
 def fork(session_id: str, cwd: str, title: str) -> Launch:
     """`--session-id` may accompany --resume only together with --fork-session."""
     sid = str(uuid.uuid4())
-    return Launch(cwd, [_claude(), "-r", session_id, "--fork-session", "--session-id", sid], sid,
-                  f"Fork of {title}")
+    # Name it, or the fork keeps the original's title and the two look like duplicates.
+    return Launch(cwd, [_claude(), "-r", session_id, "--fork-session", "--session-id", sid,
+                        "--name", f"{title} (fork)"], sid, f"Fork of {title}")

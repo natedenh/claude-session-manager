@@ -18,11 +18,13 @@ from typing import Callable
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 3  # bump whenever parse_session changes
+CACHE_VERSION = 4  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
 TIMESTAMP_RE = re.compile(r'"timestamp":"([^"]+)"')
+UUID_RE = re.compile(r'"uuid":"([^"]+)"')
+SESSION_ID_RE = re.compile(r'"sessionId":"([^"]+)"')
 
 
 @dataclass
@@ -61,6 +63,10 @@ class Session:
     started: str | None = None  # ISO timestamp of the first record
     mtime: float = 0.0
     size: int = 0
+    first_uuid: str | None = None  # forks copy the history, so they share this with the original
+    copied_from: str | None = None  # another session's id found in copied records
+    born: float = 0.0  # file creation time
+    forked_from: str | None = None  # set by load_sessions, not cached
 
     @property
     def project_name(self) -> str:
@@ -112,6 +118,7 @@ def worktree_root(cwd: str) -> str:
 
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
+    first_uuid = copied_from = None
     cwds: list[str] = []  # distinct cwds, in first-seen order
     st = path.stat()
     try:
@@ -119,6 +126,10 @@ def parse_session(path: Path) -> Session | None:
             for line in f:
                 if started is None and (m := TIMESTAMP_RE.search(line)):
                     started = m.group(1)
+                if first_uuid is None and (m := UUID_RE.search(line)):
+                    first_uuid = m.group(1)
+                if copied_from is None and (m := SESSION_ID_RE.search(line)) and m.group(1) != path.stem:
+                    copied_from = m.group(1)
                 if '"cwd":"' in line and (m := CWD_RE.search(line)):
                     cwd = json.loads(f'"{m.group(1)}"')
                     if cwd not in cwds:
@@ -173,7 +184,8 @@ def parse_session(path: Path) -> Session | None:
     return Session(
         id=path.stem, path=str(path), title=title, project=project, cwd=cwd, branch=branch,
         pr_number=pr, pr_url=pr_url, worktree=worktree, worktrees=worktrees, cost=cost, started=started,
-        mtime=st.st_mtime, size=st.st_size,
+        mtime=st.st_mtime, size=st.st_size, first_uuid=first_uuid, copied_from=copied_from,
+        born=getattr(st, "st_birthtime", st.st_ctime),
     )
 
 
@@ -207,7 +219,26 @@ def load_sessions(paths: Paths) -> list[Session]:
     # Relocating a session (e.g. into a worktree) copies its transcript, so one id can
     # live in two folders. The newest copy is the one still being written.
     seen: set[str] = set()
-    return [s for s in out if not (s.id in seen or seen.add(s.id))]
+    out = [s for s in out if not (s.id in seen or seen.add(s.id))]
+    mark_forks(out)
+    return out
+
+
+def mark_forks(sessions: list[Session]) -> None:
+    """Forking copies a conversation, title included, into a new transcript. Link each fork to
+    the session it came from: the one named in its copied records, else the oldest file."""
+    groups: dict[str, list[Session]] = {}
+    for s in sessions:
+        if s.first_uuid:
+            groups.setdefault(s.first_uuid, []).append(s)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        ids = {s.id for s in group}
+        origin = min((s for s in group if s.copied_from not in ids), key=lambda s: s.born, default=None)
+        for s in group:
+            if s is not origin:
+                s.forked_from = s.copied_from if s.copied_from in ids else origin.id if origin else None
 
 
 def _alive(pid: int) -> bool:
