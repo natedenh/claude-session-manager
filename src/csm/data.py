@@ -29,6 +29,7 @@ TIMESTAMP_RE = re.compile(r'"timestamp":"([^"]+)"')
 class Paths:
     claude: Path = field(default_factory=lambda: Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude"))
     cache: Path = field(default_factory=lambda: Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "csm" / "index.json")
+    prs: Path = field(default_factory=lambda: Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "csm" / "prs.json")
     state: Path = field(default_factory=lambda: Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "csm" / "state.json")
     trash: Path = HOME / ".Trash"
     # Claude desktop's data dirs ("Claude", "Claude-3p", …) live here.
