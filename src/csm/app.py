@@ -27,6 +27,7 @@ from . import data, desktop, ghostty, launch, notify, prs, tmux
 from .costs import Costs
 from .data import LiveSession, Message, Session
 from .launch import Launch, Pending
+from .worktrees import Worktrees
 
 PER_PROJECT = 5
 PINNED = "__pinned__"  # pseudo-project key for the Pinned group
@@ -70,7 +71,8 @@ HELP = """\
   r         rename                        y         copy session id
   x         archive / unarchive           d         move transcript to the Trash
   *         pin / unpin                   space     mark; x and d act on all marked
-  $         costs                         ctrl+r    reload
+  $         costs                         W         clean up worktrees
+  ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
 
 [b]Icons[/b]
@@ -222,6 +224,7 @@ class CSM(App[Session | None]):
         Binding("escape", "clear", "Clear", show=False),
         Binding("ctrl+r", "reload", "Reload", show=False),
         Binding("dollar_sign", "costs", "Costs"),
+        Binding("W", "worktrees", "Worktrees", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -691,6 +694,9 @@ class CSM(App[Session | None]):
 
     def action_costs(self) -> None:
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
+
+    def action_worktrees(self) -> None:
+        self.push_screen(Worktrees(self.paths, self.sessions, self.live, Confirm))
 
     def action_help(self) -> None:
         self.push_screen(Help())
