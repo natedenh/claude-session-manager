@@ -35,7 +35,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `c` | (tmux) stop the session's claude process |
 | `/` | filter by title, project or branch as you type |
 | `s` | search transcript text (runs on enter) |
-| `esc` | clear the filter and search |
+| `esc` | clear the filter, search and marks |
 | `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
 | `a` | also show archived sessions (dimmed) |
 | `e` | show every session (5 per project by default) |
@@ -46,7 +46,8 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `x` | archive / unarchive in csm (hidden here only; doesn't touch the desktop app) |
 | `y` | copy the session id |
 | `d` | move the transcript to `~/.Trash` |
-| `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
+| `esc` | clear the filter, search and marks |
+| `p` `w` `l` `!` | only PR-linked / worktree / live / waiting sessions |
 | `?` | help |
 
 Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy. `▶` marks the session shown beside the list. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.

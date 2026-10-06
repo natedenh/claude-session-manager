@@ -22,6 +22,7 @@ async def test_busy_to_idle_marks_waiting_and_notifies_once(sessions, sent):
         app.poll_live()
         app.poll_live()
         assert app.waiting == {"a1"}
+        await settle(pilot)  # notifications are sent from a worker
         assert sent == ["Fix login bug is waiting"]
         row = app.row(app.by_id["a1"])
         assert row.plain.startswith("◆ ") and "bold" in str(row.spans)

@@ -29,6 +29,7 @@ from .data import LiveSession, Message, Session
 from .launch import Launch, Pending
 
 PER_PROJECT = 5
+PINNED = "__pinned__"  # pseudo-project key for the Pinned group
 STATUS_STYLE = {"idle": "green", "busy": "yellow"}
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "waiting": "waiting"}
 MAX_MESSAGE_CHARS = 2500
@@ -47,6 +48,7 @@ HELP = """\
   ↑/↓ j/k      move              [ ]      previous / next project
   enter        resume session, or collapse/expand a project
   e            show every session in every project
+  v            flat list of all sessions / grouped by project
 
 [b]Find[/b]
   /            filter by title, project or branch (as you type)
@@ -67,6 +69,8 @@ HELP = """\
   r            rename                   x        archive / unarchive
   y            copy session id          d        move transcript to the Trash
   $            costs: totals, by project, by week, top sessions
+  *            pin / unpin (pinned sessions sit at the top)
+  space        mark / unmark; x and d then act on every marked session, esc clears
   ctrl+r       reload                   q        quit (tmux: detach; sessions keep running)
 
 [b]Icons[/b]
@@ -204,6 +208,9 @@ class CSM(App[Session | None]):
         Binding("f", "fork", "Fork", show=False),
         Binding("r", "rename", "Rename"),
         Binding("x", "archive", "Archive"),
+        Binding("asterisk", "pin", "Pin"),
+        Binding("space", "mark", "Mark", show=False),
+        Binding("v", "toggle_flat", "Flat/Grouped"),
         Binding("p", "toggle('pr')", "PRs"),
         Binding("w", "toggle('worktree')", "Worktrees"),
         Binding("l", "toggle('live')", "Live"),
@@ -244,6 +251,7 @@ class CSM(App[Session | None]):
         self.search_query = ""
         self.hits: dict[str, list[str]] | None = None
         self.expanded: set[str] = set()
+        self.marked: set[str] = set()  # session ids; in memory only
         self.by_id: dict[str, Session] = {}
         self.pending: dict[str, Pending] = {}
         self.loaded = False
@@ -325,7 +333,11 @@ class CSM(App[Session | None]):
             self.waiting.add(sid)
             if self.notifications and sid != self.shown_id:
                 title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
-                notify.send(f"{title} is waiting")
+                self.send_notification(f"{title} is waiting")
+
+    @work(thread=True, group="notify")
+    def send_notification(self, message: str) -> None:
+        notify.send(message)  # may wait on tmux; keep it off the UI thread
 
     def poll_host(self) -> bool:
         """Refresh which sessions run on our tmux server. Returns True if anything changed."""
@@ -344,9 +356,9 @@ class CSM(App[Session | None]):
     def narrowed(self) -> bool:
         return bool(self.query_text.strip() or self.hits is not None or self.filters - {"archived"})
 
-    def groups(self) -> dict[str, list[Session]]:
+    def visible(self) -> list[Session]:
         tokens = self.query_text.lower().split()
-        out: dict[str, list[Session]] = {}
+        out: list[Session] = []
         for s in self.sessions:  # newest first, so projects come out ordered by recent activity
             if self.archived_by(s) and "archived" not in self.filters:
                 continue
@@ -363,6 +375,13 @@ class CSM(App[Session | None]):
             haystack = f"{s.project_name} {s.title} {s.branch or ''}".lower()
             if any(t not in haystack for t in tokens):
                 continue
+            out.append(s)
+        return out
+
+    @staticmethod
+    def grouped(sessions: list[Session]) -> dict[str, list[Session]]:
+        out: dict[str, list[Session]] = {}
+        for s in sessions:
             out.setdefault(s.project, []).append(s)
         return out
 
@@ -385,13 +404,19 @@ class CSM(App[Session | None]):
         dot = "▶ " if p.id == self.shown_id else "● "
         return Text.assemble((dot, "cyan"), ("○ ", "dim"), (p.launch.label, "italic"))
 
-    def row(self, s: Session) -> Text:
+    def tags(self, s: Session, with_project: bool) -> tuple[Text, Text]:
+        """Leading mark column (only while something is marked) and trailing project name."""
+        mark = Text("✓ " if s.id in self.marked else "  ", style="bold green") if self.marked else Text()
+        return mark, Text(f"  {s.project_name}", style="dim") if with_project else Text()
+
+    def row(self, s: Session, with_project: bool = False) -> Text:
+        mark, project = self.tags(s, with_project)
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = self.marker(s, live, style)
         icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting else ""
-        return Text.assemble(dot, icon, (s.title, title))
+        return Text.assemble(mark, dot, icon, (s.title, title), project)
 
     def marker(self, s: Session, live: LiveSession | None, style: str) -> tuple[str, str]:
         if s.id == self.shown_id:
@@ -405,26 +430,43 @@ class CSM(App[Session | None]):
         current = lst.highlighted_option.id if lst.highlighted_option else None
         keep = f"s:{self.focus_id}" if self.focus_id else current
         self.focus_id = None
-        groups = self.groups()
+        visible = self.visible()
         pending = self.pending_groups()
-        groups = {**{k: [] for k in pending if k not in groups}, **groups}
+        pinned = [s for s in visible if s.id in self.state.pinned]
+        rest = [s for s in visible if s.id not in self.state.pinned]
+        # (key, header, sessions, per-group limit, rows show their project)
+        sections = [(PINNED, "Pinned", pinned, None, True)] if pinned else []
+        if self.state.flat:
+            sections += [("", "", rest, None, True)]
+        else:
+            groups = self.grouped(rest)
+            groups = {**{k: [] for k in pending if k not in groups}, **groups}  # projects with only new sessions
+            sections += [(p, os.path.basename(p) or p, ss, PER_PROJECT, False) for p, ss in groups.items()]
+
+        def pending_for(key: str) -> list[Pending]:
+            if key == PINNED:
+                return []
+            return [p for ps in pending.values() for p in ps] if key == "" else pending.get(key, [])
         options: list[Option | None] = []
         self.by_id = {}
-        for project, sessions in groups.items():
-            name = os.path.basename(project) or project
-            collapsed = project in self.state.collapsed and not self.narrowed
-            limit = None if self.narrowed or project in self.expanded else PER_PROJECT
+        for project, name, sessions, cap, with_project in sections:
+            new = pending_for(project)
+            if not sessions and not new:
+                continue
+            collapsed = bool(name) and project in self.state.collapsed and not self.narrowed
+            limit = None if self.narrowed or project in self.expanded else cap
             shown = [] if collapsed else sessions[:limit]
             if options:
                 options.append(Option("", disabled=True))
-            options.append(Option(Text.assemble(
-                ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(pending.get(project, []))}", "dim")),
-                id=f"p:{project}"))
-            for p in [] if collapsed else pending.get(project, []):
+            if name:
+                options.append(Option(Text.assemble(
+                    ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(new)}", "dim")),
+                    id=f"p:{project}"))
+            for p in [] if collapsed else new:
                 options.append(Option(self.pending_row(p), id=f"s:{p.id}"))
             for s in shown:
                 self.by_id[s.id] = s
-                options.append(Option(self.row(s), id=f"s:{s.id}"))
+                options.append(Option(self.row(s, with_project), id=f"s:{s.id}"))
             if len(shown) < len(sessions) and not collapsed:
                 options.append(Option(Text(f"    … {len(sessions) - len(shown)} more", style="dim italic"),
                                       id=f"m:{project}"))
@@ -437,7 +479,7 @@ class CSM(App[Session | None]):
             lst.highlighted = next((i for i, x in enumerate(ids) if x and x.startswith("s:")), 0)
         else:
             self.show(None)
-        self.update_status(sum(len(v) for v in groups.values()))
+        self.update_status(len(visible))
 
     def update_status(self, count: int) -> None:
         parts = [f"{count} sessions", f"{len(self.live)} live"]
@@ -449,6 +491,8 @@ class CSM(App[Session | None]):
             parts.append("including archived")
         if self.query_text.strip():
             parts.append(f"filter “{self.query_text.strip()}”")
+        if self.marked:
+            parts.append(f"{len(self.marked)} marked")
         if self.hits is not None:
             parts.append(f"text “{self.search_query}”: {len(self.hits)} sessions")
         self.query_one("#status", Static).update("  ·  ".join(parts) + "    [dim]? help[/]")
@@ -610,6 +654,7 @@ class CSM(App[Session | None]):
         box = self.query_one("#search", Input)
         self.query_text, self.search_query, self.hits = "", "", None
         self.mode = "filter"
+        self.marked.clear()
         box.border_title = "filter"
         box.value = ""
         self.query_one(SessionList).focus()
@@ -631,7 +676,7 @@ class CSM(App[Session | None]):
     def action_jump(self, step: int) -> None:
         lst = self.query_one(SessionList)
         heads = [i for i, o in enumerate(lst.options) if o.id and o.id.startswith("p:")]
-        if not heads:
+        if not heads or self.state.flat and len(heads) == 1:
             return
         cur = lst.highlighted or 0
         ahead = [i for i in heads if (i > cur if step > 0 else i < cur)]
@@ -788,16 +833,49 @@ class CSM(App[Session | None]):
                 self.show(s)
         self.push_screen(Prompt("Rename session", s.title), done)
 
-    def action_archive(self) -> None:
+    def action_pin(self) -> None:
         if not (s := self.selected()):
             return
-        if s.id not in self.state.archived and self.archived_by(s):
+        self.state.pinned ^= {s.id}
+        self.state.save()
+        self.focus_id = s.id
+        self.rebuild()
+
+    def action_toggle_flat(self) -> None:
+        self.state.flat = not self.state.flat
+        self.state.save()
+        self.rebuild()
+
+    def action_mark(self) -> None:
+        if not (s := self.selected()):
+            return
+        self.marked ^= {s.id}
+        self.rebuild()
+        lst = self.query_one(SessionList)
+        after = (i for i, o in enumerate(lst.options) if i > (lst.highlighted or 0) and (o.id or "").startswith("s:"))
+        if (nxt := next(after, None)) is not None:
+            lst.highlighted = nxt
+
+    def targets(self) -> list[Session]:
+        """The marked sessions still in the list, or else the highlighted one."""
+        marked = [s for s in self.by_id.values() if s.id in self.marked]
+        return marked or ([s] if (s := self.selected()) else [])
+
+    def action_archive(self) -> None:
+        targets = self.targets()
+        if not targets:
+            return
+        if len(targets) == 1 and (s := targets[0]).id not in self.state.archived and self.archived_by(s):
             self.notify("Archived in Claude desktop; unarchive it there", severity="warning")
             return
-        archiving = s.id not in self.state.archived
-        self.state.archived ^= {s.id}
+        targets = [s for s in targets if s.id in self.state.archived or not self.archived_by(s)]
+        archiving = any(s.id not in self.state.archived for s in targets)
+        ids = {s.id for s in targets}
+        self.state.archived = self.state.archived | ids if archiving else self.state.archived - ids
         self.state.save()
-        self.notify(f"{'Archived' if archiving else 'Unarchived'} “{s.title}”", timeout=2)
+        what = f"“{targets[0].title}”" if len(targets) == 1 else f"{len(targets)} sessions"
+        self.notify(f"{'Archived' if archiving else 'Unarchived'} {what}", timeout=2)
+        self.marked.clear()
         self.rebuild()
 
     def action_copy_id(self) -> None:
@@ -810,18 +888,24 @@ class CSM(App[Session | None]):
         self.notify(f"Copied {s.id}", timeout=2)
 
     def action_trash(self) -> None:
-        if not (s := self.selected()):
-            return
-        if s.id in self.live:
-            self.notify("That session is running; close it first", severity="warning")
+        every = self.targets()
+        targets = [s for s in every if s.id not in self.live]
+        if skipped := len(every) - len(targets):
+            self.notify(f"{skipped} running session{'s' if skipped != 1 else ''} skipped; close "
+                        f"{'them' if skipped != 1 else 'it'} first", severity="warning")
+        if not targets:
             return
 
         def done(yes: bool) -> None:
             if yes:
-                dest = data.trash(s, self.paths)
-                self.notify(f"Moved to {tilde(str(dest))}", timeout=3)
+                for s in targets:
+                    dest = data.trash(s, self.paths)
+                self.notify(f"Moved to {tilde(str(dest))}" if len(targets) == 1
+                            else f"Moved {len(targets)} sessions to the Trash", timeout=3)
+                self.marked.clear()
                 self.load()
-        self.push_screen(Confirm(f"Move “{s.title}” to the Trash?"), done)
+        what = f"“{targets[0].title}”" if len(targets) == 1 else f"{len(targets)} sessions"
+        self.push_screen(Confirm(f"Move {what} to the Trash?"), done)
 
 
 def main() -> None:
