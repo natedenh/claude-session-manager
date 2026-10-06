@@ -653,3 +653,26 @@ async def test_when_idle_send_needs_a_csm_pane(sessions):
         (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
         app.poll_live()
         assert ("send", "b1", "carry on") in host.calls
+
+
+async def test_rows_open_beside_the_list_get_a_soft_background(sessions):
+    host = FakeHost()
+    host.panes, host.also = {"a2": "%1", "a1": "%2"}, ["a2", "a1"]
+    app = CSM(sessions, host=host)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        app.poll_host()
+        app.rebuild()
+        await pilot.pause()
+        lst = app.query_one(SessionList)
+        assert lst.open_ids == {"s:a2", "s:a1"}
+        open_bg = lst.get_visual_style("option-list--option", "session-list--open").rich_style.bgcolor
+        plain_bg = lst.get_visual_style("option-list--option").rich_style.bgcolor
+        assert open_bg != plain_bg
+
+        def row_bg(sid):
+            i = next(n for n, o in enumerate(lst.options) if o.id == f"s:{sid}")
+            strip = lst._get_option_render(lst.options[i], lst.get_visual_style("option-list--option"))[0]
+            return list(strip)[-1].style.bgcolor
+        assert row_bg("a2") == open_bg and row_bg("a1") == open_bg
+        assert row_bg("b1") != open_bg  # b1 has the cursor; it keeps the cursor's own style path

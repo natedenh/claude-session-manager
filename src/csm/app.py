@@ -172,6 +172,18 @@ class SessionList(OptionList):
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
     ]
+    # Rows of sessions open beside the list get a soft background across the whole row.
+    COMPONENT_CLASSES = {"session-list--open"}
+    DEFAULT_CSS = """
+    SessionList > .session-list--open { background: $accent 18%; }
+    """
+    open_ids: set[str] = set()
+
+    def _get_option_render(self, option: Option, style):
+        index = self._option_to_index.get(option)
+        if option.id in self.open_ids and index != self.highlighted and index != self._mouse_hovering_over:
+            style = self.get_visual_style("option-list--option", "session-list--open")
+        return super()._get_option_render(option, style)
 
 
 class Prompt(ModalScreen[str | None]):
@@ -692,6 +704,9 @@ class CSM(App[Session | None]):
             if len(shown) < len(sessions) and not collapsed:
                 options.append(Option(Text(f"    … {len(sessions) - len(shown)} more", style="dim italic"),
                                       id=f"m:{project}"))
+        attached = set(self.viewers.values())
+        lst.open_ids = {f"s:{i}" for i in self.shown_ids if i not in attached} | \
+                       {f"s:{bg}" for bg, v in self.viewers.items() if v in self.shown_ids}
         lst.clear_options()
         lst.add_options(options)
         ids = [o.id for o in lst.options]
