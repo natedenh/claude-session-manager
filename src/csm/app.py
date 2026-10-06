@@ -59,10 +59,10 @@ HELP = """\
   s         search transcript text (enter runs it)
   esc       clear the filter, search and marks
   p w l !   only PR-linked / worktree / live / waiting-for-you sessions
-  a         also show archived sessions (archived in csm, Claude desktop or the auto rule)
+  a         also show archived sessions (by csm, Claude desktop or the auto rule)
 
 [b]Open[/b]
-  enter     beside this list in tmux, otherwise here (back to the list when claude exits).
+  enter     beside this list in tmux, else here (back to the list when claude exits).
             A session already open in a Ghostty tab or Claude desktop is shown there.
   ctrl+\\    (tmux) switch focus between this list and the session
   n / N     new session in the highlighted project / in a new worktree
@@ -72,7 +72,7 @@ HELP = """\
   o / O     resume in a new Ghostty tab / window
   c         (tmux) stop the session's claude process
   g         open the session's PR in the browser
-  .         open the project directory in your editor ($CSM_EDITOR, code, cursor, else Finder)
+  .         open the project in your editor ($CSM_EDITOR, code, cursor, or Finder)
   D         open the session in Claude desktop, even if it isn't running there
 
 [b]Manage[/b]
@@ -90,7 +90,8 @@ HELP = """\
 
 [b]Icons[/b]
   [green]⇄[/] PR linked: [yellow]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
-  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list   ◆ waiting for you   [bold red]?[/] needs permission (with hooks)
+  [green]●[/] live, idle   [yellow]●[/] live, busy   ▶ shown beside the list
+  ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
 """
 
 
@@ -149,7 +150,8 @@ def context_line(s: Session) -> Text | None:
     window = data.context_window(s.context_model, s.context_tokens)
     filled = min(10, int(frac * 10))
     return Text(f"context {'▰' * filled}{'▱' * (10 - filled)} {frac:.0%} · "
-                f"{s.context_tokens // 1000}k of {window // 1000}k tokens", style=context_style(frac))
+                f"{s.context_tokens // 1000}k of {'1M' if window >= 1_000_000 else f'{window // 1000}k'} tokens",
+                style=context_style(frac))
 
 
 def tilde(path: str) -> str:

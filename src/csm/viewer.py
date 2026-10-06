@@ -94,15 +94,19 @@ class Transcript(ScrollView, can_focus=True):
         self.relayout()
 
     def on_resize(self) -> None:
-        if self.items is not None and self.size.width != self.width_laid:
+        if self.items is not None and self.text_width() != self.width_laid:
             self.relayout()
+
+    def text_width(self) -> int:
+        # Leave room for the vertical scrollbar, or the last characters of long lines are cut.
+        return self.size.width - self.styles.scrollbar_size_vertical - 1
 
     @work(thread=True, exclusive=True, group="layout")
     def relayout(self) -> None:
-        width = self.size.width
-        if not width or self.items is None:
+        width = self.text_width()
+        if width <= 0 or self.items is None:
             return
-        lines = layout(self.items, width - 1, self.dark)
+        lines = layout(self.items, width, self.dark)
         if not get_current_worker().is_cancelled:
             self.app.call_from_thread(self.apply, lines, width)
 
@@ -182,7 +186,7 @@ class Viewer(Screen[None]):
     ]
     DEFAULT_CSS = """
     Viewer #head { height: auto; padding: 0 2; text-style: bold; }
-    Viewer Transcript { padding: 0 1; height: 1fr; }
+    Viewer Transcript { padding: 0 1; height: 1fr; overflow-x: hidden; }
     Viewer #loading { padding: 1 2; color: $text-muted; }
     Viewer #find { display: none; margin: 0 1; border-title-color: $accent; }
     Viewer #find.-on { display: block; }
