@@ -488,3 +488,24 @@ async def test_archiving_keeps_the_cursor_in_place(paths, write, tmp_path):
         assert app.selected().id == "s4"
         await pilot.press("x")
         assert app.selected().id == "s1"  # last row gone: the one above it
+
+
+async def test_archived_session_reappears_while_working(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("x")  # archive b1
+        assert "s:b1" not in ids(app)
+        (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
+        app.poll_live()
+        await pilot.pause()
+        assert "s:b1" in ids(app)  # back while it works, still archived
+        assert "dim" in str(app.query_one(SessionList).get_option("s:b1").prompt.spans)
+        (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
+        app.poll_live()
+        await pilot.pause()
+        assert "s:b1" in ids(app)  # finished a turn: waiting on you, so still shown
+        app.clear_attention("b1")
+        app.rebuild()
+        assert "s:b1" not in ids(app)
+    assert data.State(sessions.state).archived == {"b1"}

@@ -485,7 +485,7 @@ class CSM(App[Session | None]):
         tokens = self.query_text.lower().split()
         out: list[Session] = []
         for s in self.sessions:  # newest first, so projects come out ordered by recent activity
-            if self.archived_by(s) and "archived" not in self.filters:
+            if self.archived_by(s) and "archived" not in self.filters and not self.active(s):
                 continue
             if "pr" in self.filters and not s.pr_number:
                 continue
@@ -504,6 +504,12 @@ class CSM(App[Session | None]):
                 continue
             out.append(s)
         return out
+
+    def active(self, s: Session) -> bool:
+        """Working, waiting on you, or open beside the list: shown even when archived."""
+        live = self.live.get(s.id)
+        return bool(live and live.status != "idle") or s.id in self.waiting or s.id in self.permission \
+            or s.id in self.shown_ids
 
     @staticmethod
     def grouped(sessions: list[Session]) -> dict[str, list[Session]]:
@@ -711,7 +717,7 @@ class CSM(App[Session | None]):
 
     def summary_page(self) -> summary.Page:
         return summary.build(self.sessions, self.live, self.waiting, self.permission, self.digests,
-                             self.last_said, hidden=lambda s: bool(self.archived_by(s)))
+                             self.last_said, hidden=lambda s: bool(self.archived_by(s)) and not self.active(s))
 
     def last_said(self, s: Session) -> str | None:
         """The end of the session's last assistant message: usually the question it's waiting on."""

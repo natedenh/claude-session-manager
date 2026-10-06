@@ -113,7 +113,7 @@ The hook writes `~/.local/state/csm/status/<session id>.json` (removed at sessio
 - **Live status:** read from `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
 - **Parse cache:** `~/.cache/csm/index.json`, keyed on file mtime and size. The first run parses everything; after that only changed files are re-read.
 - **csm's own state:** archived ids, collapsed projects, pinned sessions, the flat-view setting, and session tags and notes, in `~/.local/state/csm/state.json`.
-- **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`. csm never changes the desktop app's archive.
+- **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`, except while it's working, waiting on you or shown beside the list: then it reappears, dimmed, and hides again once it's settled. csm never changes the desktop app's archive.
 
 - **Exports:** `E` writes `<date> <title>.md` (front matter, then the whole conversation) to `~/Downloads/claude-sessions/`. Change the folder with `--export-dir` or `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
 
