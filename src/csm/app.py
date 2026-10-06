@@ -31,6 +31,7 @@ from .costs import Costs
 from .data import LiveSession, Message, Session, normalize_tags
 from .launch import Launch, Pending
 from .viewer import Viewer
+from .loadout import LoadoutView
 from .worktrees import Worktrees
 
 PER_PROJECT = 5
@@ -90,6 +91,7 @@ HELP = """\
   #         edit tags (#waiting-on-chris; marked sessions get them added)
   i         edit a note; both show in the preview and are searched by /  (#tag)
   t         read the whole transcript (/ search, n N next / previous, g G top / bottom)
+  L         what the session loaded: plugins, skills (✓ used), MCP servers, agents, hooks, CLAUDE.md files
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
   ctrl+r    reload
@@ -188,6 +190,8 @@ class SessionList(OptionList):
     /* Fixed greys: the ansi themes' colors come from the terminal and can't be mixed into a tint. */
     SessionList:light > .session-list--open { background: #eeeeee; }
     SessionList:dark > .session-list--open { background: #333333; }
+    SessionList:light > .option-list--option-hover { background: #e6e6e6; }
+    SessionList:dark > .option-list--option-hover { background: #3a3a3a; }
     /* Away in a session pane, the cursor fades to a grey; the list's own focus keeps it solid. */
     SessionList:blur > .option-list--option-highlighted { color: $foreground; text-style: none; }
     SessionList:light:blur > .option-list--option-highlighted { background: #dcdcdc; }
@@ -338,6 +342,7 @@ class CSM(App[Session | None]):
         Binding("c", "close_session", "Close", show=False),
         Binding("X", "retire", "Retire", show=False),
         Binding("at", "when_idle", "When idle", show=False),
+        Binding("L", "loadout", "Loaded", show=False),
         Binding("o", "open('tab')", "New tab", show=False),
         Binding("O", "open('window')", "New window", show=False),
         Binding("n", "new", "New"),
@@ -1060,6 +1065,10 @@ class CSM(App[Session | None]):
 
     def action_costs(self) -> None:
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
+
+    def action_loadout(self) -> None:
+        if (s := self.selected()) is not None:
+            self.push_screen(LoadoutView(s))
 
     def action_transcript(self) -> None:
         if (s := self.selected()) is not None:

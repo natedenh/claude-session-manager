@@ -709,3 +709,31 @@ async def test_cursor_fades_when_the_list_loses_focus(sessions):
         app.app_focus = True
         await pilot.pause()
         assert cursor_bg() == focused
+
+
+async def test_L_shows_what_the_session_loaded(sessions):
+    b1 = next(sessions.projects.glob("*/b1.jsonl"))
+    with open(b1, "a") as f:
+        f.write(json.dumps({"type": "attachment", "attachment": {
+            "type": "skill_listing", "isInitial": True, "names": ["travel"]}}) + "\n")
+    app = CSM(sessions)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await settle(pilot)
+        await pilot.press("L")
+        from csm.loadout import LoadoutView
+        assert isinstance(app.screen, LoadoutView)
+        from rich.console import Console
+        con = Console(record=True, width=120)
+        con.print(app.screen.query_one("Static").content)
+        assert "travel" in con.export_text()
+        await pilot.press("escape")
+        assert not isinstance(app.screen, LoadoutView)
+
+
+async def test_hover_is_a_fixed_grey(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        lst = app.query_one(SessionList)
+        hover = lst.get_visual_style("option-list--option", "option-list--option-hover").rich_style.bgcolor
+        assert hover.get_truecolor().hex == "#3a3a3a"  # not a terminal palette color, which can't be softened

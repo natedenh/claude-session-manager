@@ -55,6 +55,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `d` | move the transcript to `~/.Trash` |
 | `E` | export the highlighted (or marked) sessions to Markdown and reveal them in Finder |
 | `t` | read the whole transcript; `/` searches, `n` / `N` step through matches, `g` / `G` top / bottom, `esc` closes search then the viewer |
+| `L` | what the session loaded: plugins (with their skills, agents and MCP servers), other skills with ✓ and a count for each one used, MCP servers (failed ones in red), agents, hooks that reported output, CLAUDE.md files |
 | `W` | clean up worktrees (see below) |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |
