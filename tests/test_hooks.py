@@ -155,7 +155,7 @@ async def test_permission_state(sessions, sent):
         row = app.row(app.by_id["a1"])
         assert row.plain.startswith("? ") and "red" in str(row.spans)
         assert "1 need permission" in str(app.query_one("#status").render())
-        assert "needs permission: Claude needs your permission to use Bash" in "".join(
+        assert "needs permission (1m): Claude needs your permission to use Bash" in "".join(
             str(r) for r in app.meta(app.by_id["a1"]).renderables)
         app.poll_live()
         await settle(pilot)
@@ -173,16 +173,16 @@ async def test_hook_waiting_is_immediate_and_opening_clears(sessions, sent, monk
         set_hook(sessions, "a1", "waiting")
         app.poll_live()
         await settle(pilot)
-        assert app.waiting == {"a1"} and sent == ["Fix login bug is waiting"]
+        assert set(app.waiting) == {"a1"} and sent == ["Fix login bug is waiting"]
         app.poll_live()
-        assert app.waiting == {"a1"}
+        assert set(app.waiting) == {"a1"}
         monkeypatch.setattr(app, "resume_flow", lambda s: None)
         app.resume(app.by_id["a1"])
         app.poll_live()
-        assert app.waiting == set() and app.permission == {}
+        assert set(app.waiting) == set() and app.permission == {}
         set_hook(sessions, "a1", "working")
         app.poll_live()
-        assert app.waiting == set()
+        assert set(app.waiting) == set()
 
 
 async def test_hook_ignored_when_not_live_and_absent(sessions, sent):
@@ -191,5 +191,5 @@ async def test_hook_ignored_when_not_live_and_absent(sessions, sent):
     async with app.run_test() as pilot:
         await settle(pilot)
         app.poll_live()
-        assert app.permission == {} and app.waiting == set() and sent == []
+        assert app.permission == {} and set(app.waiting) == set() and sent == []
         assert "permission" not in str(app.query_one("#status").render())

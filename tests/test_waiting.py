@@ -17,11 +17,11 @@ async def test_busy_to_idle_marks_waiting_and_notifies_once(sessions, sent):
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
-        assert app.waiting == set()
+        assert set(app.waiting) == set()
         set_status(sessions, "a1", "idle")
         app.poll_live()
         app.poll_live()
-        assert app.waiting == {"a1"}
+        assert set(app.waiting) == {"a1"}
         await settle(pilot)  # notifications are sent from a worker
         assert sent == ["Fix login bug is waiting"]
         row = app.row(app.by_id["a1"])
@@ -30,7 +30,7 @@ async def test_busy_to_idle_marks_waiting_and_notifies_once(sessions, sent):
         assert "waiting for you" in "".join(str(r) for r in app.meta(app.by_id["a1"]).renderables)
         set_status(sessions, "a1", "busy")
         app.poll_live()
-        assert app.waiting == set()
+        assert set(app.waiting) == set()
         await settle(pilot)
 
 
@@ -40,7 +40,7 @@ async def test_already_idle_at_start_is_not_waiting(sessions, sent):
     async with app.run_test() as pilot:
         await settle(pilot)
         app.poll_live()
-        assert app.waiting == set() and sent == []
+        assert set(app.waiting) == set() and sent == []
 
 
 async def test_opening_clears_and_leaving_live_clears(sessions, monkeypatch):
@@ -50,14 +50,14 @@ async def test_opening_clears_and_leaving_live_clears(sessions, monkeypatch):
         await settle(pilot)
         set_status(sessions, "a1", "idle")
         app.poll_live()
-        assert app.waiting == {"a1"}
+        assert set(app.waiting) == {"a1"}
         monkeypatch.setattr(app, "resume_flow", lambda s: None)  # opening itself is covered elsewhere
         app.resume(app.by_id["a1"])
-        assert app.waiting == set()
-        app.waiting.add("a1")
+        assert set(app.waiting) == set()
+        app.waiting["a1"] = 0.0
         (sessions.live / "1.json").unlink()
         app.poll_live()
-        assert app.waiting == set()
+        assert set(app.waiting) == set()
         await settle(pilot)
 
 
@@ -92,7 +92,7 @@ async def test_notifications_disabled(sessions, sent):
         await settle(pilot)
         set_status(sessions, "a1", "idle")
         app.poll_live()
-        assert app.waiting == {"a1"} and sent == []
+        assert set(app.waiting) == {"a1"} and sent == []
 
 
 def test_send_writes_osc9_to_client_tty(monkeypatch, tmp_path):
@@ -111,3 +111,24 @@ def test_send_fails_silently(monkeypatch):
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setattr("builtins.open", lambda *a, **k: (_ for _ in ()).throw(OSError))
     real_send("x")
+
+
+async def test_waiting_shows_how_long_and_redraws_as_it_grows(sessions, sent):
+    import time
+    from csm.app import SessionList, waited
+    assert waited(time.time() - 5) == "1m" and waited(time.time() - 25 * 60) == "25m"
+    assert waited(time.time() - 3 * 3600) == "3h" and waited(time.time() - 2 * 86400) == "2d"
+    set_status(sessions, "a1", "idle")
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        app.waiting["a1"] = time.time() - 25 * 60
+        app.rebuild()
+        await settle(pilot)
+        assert app.row(app.by_id["a1"]).plain.startswith("◆ ○ 25m Fix login bug")
+        assert "1 waiting (longest 25m)" in str(app.query_one("#status").render())
+        assert "waiting for you for 25m" in "".join(str(r) for r in app.meta(app.by_id["a1"]).renderables)
+        app.waiting["a1"] = time.time() - 2 * 3600  # time passes; the poll notices the label changed
+        app.poll_live()
+        await settle(pilot)
+        assert "2h Fix login bug" in app.query_one(SessionList).get_option("s:a1").prompt.plain

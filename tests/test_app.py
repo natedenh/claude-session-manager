@@ -449,7 +449,7 @@ async def test_reply_sends_to_hosted_session_and_clears_waiting(sessions):
         assert len(app.screen_stack) == 1 and not any(c[0] == "send" for c in host.calls)
         await pilot.press("enter")
         await settle(pilot)
-        app.waiting.add("b1")
+        app.waiting["b1"] = 0.0
         await pilot.press("R")
         await settle(pilot)
         await pilot.press(*"hi there", "enter")

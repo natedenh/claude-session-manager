@@ -103,7 +103,7 @@ HELP = """\
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [warn]●[/] live, busy   » shown beside the list
   on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull
-  ◆ waiting for you   [bold red]?[/] needs permission (with hooks)   ⑃ fork   [red]◔[/] context over 80%
+  ◆ waiting for you   [bold red]?[/] needs permission (with hooks); both show how long, ◆ 12m   ⑃ fork   [red]◔[/] context over 80%
   bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
 
@@ -147,6 +147,15 @@ def ago(ts: float) -> str:
         if d >= sec:
             return f"{int(d // sec)}{unit} ago"
     return "just now"
+
+
+def waited(ts: float) -> str:
+    """How long since ts, compactly: 1m, 25m, 3h, 2d."""
+    d = time.time() - ts
+    for unit, sec in (("d", 86400), ("h", 3600)):
+        if d >= sec:
+            return f"{int(d // sec)}{unit}"
+    return f"{max(1, int(d // 60))}m"
 
 
 def context_fraction(s: Session) -> float | None:
@@ -458,8 +467,11 @@ class CSM(App[Session | None]):
         self.sessions: list[Session] = []
         self.live: dict[str, LiveSession] = {}
         self.notifications = notifications
-        self.waiting: set[str] = set()  # finished a turn since you last opened them; memory only
+        # finished a turn since you last opened them: session id -> since when; memory only
+        self.waiting: dict[str, float] = {}
         self.permission: dict[str, str] = {}  # from hooks: session id -> what it's asking for
+        self.permission_at: dict[str, float] = {}
+        self.wait_labels: dict[str, str] = {}  # what the rows show, to redraw when a minute ticks over
         self.hook_waiting: set[str] = set()
         self.hook_notified: dict[str, float] = {}
         self.hook_seen: dict[str, float] = {}  # hook file time already dealt with (opened)
@@ -561,7 +573,7 @@ class CSM(App[Session | None]):
         self.track_hooks(live)
         self.track(live)
         changed = self.run_when_idle(live) or changed
-        if (changed or (set(self.waiting), self.permission) != before
+        if (changed or (set(self.waiting), self.permission) != before or self.labels() != self.wait_labels
                 or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}
                 or data.viewers(live) != self.viewers):
             self.live = live
@@ -570,31 +582,40 @@ class CSM(App[Session | None]):
     def track(self, live: dict[str, LiveSession]) -> None:
         """Mark sessions that went from working to idle as waiting. The first call has no history."""
         prev, self.last_status = self.last_status, {k: v.status for k, v in live.items()}
-        self.waiting &= {k for k, v in live.items() if v.status == "idle"} | self.hook_waiting
+        keep = {k for k, v in live.items() if v.status == "idle"} | self.hook_waiting
+        self.waiting = {k: t for k, t in self.waiting.items() if k in keep}
         for sid, now in self.last_status.items():
             if prev is None or now != "idle" or prev.get(sid, "idle") == "idle" or sid in self.waiting:
                 continue
-            self.waiting.add(sid)
+            self.waiting[sid] = time.time()
             if self.notifications and sid != self.shown_id:
                 title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
                 self.send_notification(f"{title} is waiting")
 
     def track_hooks(self, live: dict[str, LiveSession]) -> None:
         """Apply states written by `csm hook`. Opening a session ignores its file until a newer one."""
-        self.permission, self.hook_waiting = {}, set()
+        self.permission, self.permission_at, self.hook_waiting = {}, {}, set()
         for sid, h in hooks.load_status(self.paths.status).items():
             if sid not in live or h["at"] <= self.hook_seen.get(sid, 0) or h["state"] == "working":
                 continue
             perm = h["state"] == "permission"
             if perm:
                 self.permission[sid] = h.get("message") or "permission"
+                self.permission_at[sid] = h["at"]
             else:
                 self.hook_waiting.add(sid)
-                self.waiting.add(sid)
+                self.waiting[sid] = h["at"]  # when it stopped, even if csm wasn't running then
             if self.notifications and sid != self.shown_id and self.hook_notified.get(sid, 0) < h["at"]:
                 title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
                 self.send_notification(f"{title} needs permission" if perm else f"{title} is waiting")
             self.hook_notified[sid] = h["at"]
+
+    def attention(self) -> dict[str, float]:
+        """Sessions that need you -> since when."""
+        return {**self.waiting, **self.permission_at}
+
+    def labels(self) -> dict[str, str]:
+        return {sid: waited(t) for sid, t in self.attention().items()}
 
     @work(thread=True, group="notify")
     def send_notification(self, message: str) -> None:
@@ -708,7 +729,8 @@ class CSM(App[Session | None]):
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
         then = Text(f"  @{q['do']}", style="cyan") if (q := self.state.when_idle.get(s.id)) else Text()
-        return Text.assemble(mark, dot, icon, (s.title, title), fork, bg, then, context_flag(s), tags, project)
+        wait = (f"{waited(t)} ", dot[1]) if (t := self.attention().get(s.id)) else ""
+        return Text.assemble(mark, dot, icon, wait, (s.title, title), fork, bg, then, context_flag(s), tags, project)
 
     def fork_tag(self, s: Session) -> Text:
         """Forks copy their original's title; when both are listed, say which is which."""
@@ -742,6 +764,7 @@ class CSM(App[Session | None]):
                 lst.replace_option_prompt(f"s:{sid}", self.row(s, with_project))
 
     def rebuild(self) -> None:
+        self.wait_labels = self.labels()
         lst = self.query_one(SessionList)
         current = lst.highlighted_option.id if lst.highlighted_option else None
         was = lst.highlighted  # where the cursor sat, for when its row disappears
@@ -823,7 +846,7 @@ class CSM(App[Session | None]):
         if self.permission:
             parts.append(f"{len(self.permission)} need permission")
         if self.waiting:
-            parts.append(f"{len(self.waiting)} waiting")
+            parts.append(f"{len(self.waiting)} waiting (longest {waited(min(self.waiting.values()))})")
         if only := sorted(self.filters - {"archived"}):
             parts.append("only " + ", ".join(FILTER_NAMES[f] for f in only))
         if self.state.auto_archive["enabled"] and (n := sum(self.archived_by(s) == "auto" for s in self.sessions)):
@@ -969,9 +992,10 @@ class CSM(App[Session | None]):
                 lines.append(Text(f"  attached in tmux pane {v.tmux.rsplit('.', 1)[-1]}" if v and v.tmux
                                   else "  attached to a terminal" if v else "  no terminal attached", style="dim"))
         if s.id in self.permission:
-            lines.append(Text(f"? needs permission: {self.permission[s.id]}", style="bold red"))
+            since = f" ({waited(self.permission_at[s.id])})" if s.id in self.permission_at else ""
+            lines.append(Text(f"? needs permission{since}: {self.permission[s.id]}", style="bold red"))
         elif s.id in self.waiting:
-            lines.append(Text("◆ waiting for you", style="bold"))
+            lines.append(Text(f"◆ waiting for you for {waited(self.waiting[s.id])}", style="bold"))
         if s.pr_url:
             st = self.pr_status.get(s.pr_url)
             lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
@@ -1176,8 +1200,9 @@ class CSM(App[Session | None]):
         self.start_launch(launch.resume(s.id, s.cwd, s.title), also)
 
     def clear_attention(self, sid: str) -> None:
-        self.waiting.discard(sid)
+        self.waiting.pop(sid, None)
         self.permission.pop(sid, None)
+        self.permission_at.pop(sid, None)
         if sid in self.hook_notified:
             self.hook_seen[sid] = self.hook_notified[sid]
         self.hook_waiting.discard(sid)
