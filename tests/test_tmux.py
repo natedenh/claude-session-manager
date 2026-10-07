@@ -114,3 +114,9 @@ def test_next_pane_cycles_sidebar_top_bottom(server):
         server.run("select-pane", "-t", ":.+")
         order.append(server.run("display", "-p", "#{@csm_session}") or "sidebar")
     assert order == ["a", "b", "sidebar"]
+
+
+def test_start_runs_hidden_and_leaves_the_view_alone(server):
+    server.show("s1", "/tmp", "sleep 600")
+    pane = server.start("s2", "/tmp", "sleep 600")
+    assert server.shown_all() == ["s1"] and server.hosted()["s2"] == pane

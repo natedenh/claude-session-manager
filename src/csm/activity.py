@@ -73,9 +73,9 @@ def heartbeat(width: int, phase: float, amp: float = 1.0, beats: int = 1) -> tup
 
 def starfield(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[str, list[float]]:
     """Stars twinkling at their own pace; more of them the more sessions are working."""
-    marks = "·∙•✦"
+    marks = "⋆✧✦✶✷✸"  # small to large: each star swells and shrinks as it twinkles
     out, light = [], []
-    density = 0.18 + 0.08 * min(n, 4)
+    density = 0.12 + 0.05 * min(n, 4)  # sparser than the glyphs' size suggests, so each has room
     for x in range(width):
         seed = math.sin(x * 12.9898) * 43758.5453 % 1  # a fixed, scattered per-cell value, so stars stay put
         if seed > density * amp:
@@ -83,7 +83,7 @@ def starfield(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[s
             light.append(0.0)
             continue
         t = 0.5 + 0.5 * math.sin(phase * (0.6 + seed * 2.5) + seed * 40)
-        out.append(marks[min(3, int(t * 4))])
+        out.append(marks[min(len(marks) - 1, int(t * len(marks)))])
         light.append(t ** 3)
     return "".join(out), light
 

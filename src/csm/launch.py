@@ -35,9 +35,12 @@ def resume(session_id: str, cwd: str, label: str = "") -> Launch:
     return Launch(cwd, [_claude(), "-r", session_id], session_id, label)
 
 
-def new(project: str, worktree: bool = False) -> Launch:
+def new(project: str, worktree: bool = False, prompt: str = "") -> Launch:
+    """`prompt` becomes the first message. It goes right after `claude`, since `-w` takes an
+    optional name; a leading space keeps a prompt that starts with - from reading as an option."""
     sid = str(uuid.uuid4())
-    argv = [_claude(), "--session-id", sid] + (["-w"] if worktree else [])
+    first = [(" " + prompt) if prompt.startswith("-") else prompt] if prompt else []
+    argv = [_claude(), *first, "--session-id", sid] + (["-w"] if worktree else [])
     return Launch(project, argv, sid, "New worktree session" if worktree else "New session")
 
 

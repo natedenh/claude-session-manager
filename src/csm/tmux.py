@@ -107,6 +107,10 @@ class Tmux:
         self.run("set-option", "-p", "-t", pane, "@csm_session", session_id)
         return pane
 
+    def start(self, session_id: str, cwd: str, command: str, name: str = "") -> str:
+        """Run the session in a hidden window, leaving the panes beside the sidebar alone."""
+        return self.pane_for(self.panes(), session_id, cwd, command, name)
+
     def show(self, session_id: str, cwd: str, command: str, name: str = "") -> str:
         """Put only this session's pane beside the sidebar and focus it, starting it if needed."""
         panes = self.panes()

@@ -196,6 +196,11 @@ class FakeHost:
         self.calls.append(("send", sid, text))
         return sid in self.panes
 
+    def start(self, sid, cwd, command, name=""):
+        self.calls.append(("start", sid, command))
+        self.cwds[sid] = cwd
+        self.panes.setdefault(sid, f"%{len(self.panes) + 1}")
+
     def show(self, sid, cwd, command, name=""):
         self.calls.append(("show", sid, command))
         self.cwds[sid] = cwd
@@ -271,7 +276,7 @@ async def test_new_on_session_and_header_non_host(sessions, tmp_path):
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
-        await pilot.press("n")
+        await pilot.press("n", "enter")
     l = app.return_value
     assert l.cwd == str(tmp_path / "beta") and l.argv[1] == "--session-id" and l.focus_id == l.argv[2]
     assert len(l.argv) == 3
@@ -281,7 +286,7 @@ async def test_new_on_session_and_header_non_host(sessions, tmp_path):
         await settle(pilot)
         await pilot.press("up")  # beta's header
         assert app.query_one(SessionList).highlighted_option.id.startswith("p:")
-        await pilot.press("n")
+        await pilot.press("n", "enter")
     assert app.return_value.cwd == str(tmp_path / "beta")
 
 
@@ -289,7 +294,7 @@ async def test_new_worktree_adds_flag(sessions):
     app = CSM(sessions)
     async with app.run_test() as pilot:
         await settle(pilot)
-        await pilot.press("N")
+        await pilot.press("N", "enter")
     assert app.return_value.argv[-1] == "-w" and app.return_value.argv[1] == "--session-id"
 
 
@@ -298,7 +303,7 @@ async def test_new_host_mode_shows_pending_row_until_pane_gone(sessions, tmp_pat
     app = CSM(sessions, host=host)
     async with app.run_test() as pilot:
         await settle(pilot)
-        await pilot.press("n")
+        await pilot.press("n", "enter")
         await settle(pilot)
         [(_, sid, command)] = host.calls
         assert command.endswith(f"--session-id {sid}") and host.cwds[sid] == str(tmp_path / "beta")
@@ -307,7 +312,7 @@ async def test_new_host_mode_shows_pending_row_until_pane_gone(sessions, tmp_pat
         await pilot.press("enter")  # shows it again rather than resuming
         await settle(pilot)
         assert len(host.calls) == 2 and host.calls[1][1] == sid and "-r" not in host.calls[1][2]
-        await pilot.press("n")  # from the pending row: same project
+        await pilot.press("n", "enter")  # from the pending row: same project
         await settle(pilot)
         assert host.cwds[host.calls[2][1]] == str(tmp_path / "beta")
         host.panes.clear()
@@ -321,7 +326,7 @@ async def test_pending_row_replaced_by_real_session(sessions, write, tmp_path):
     app = CSM(sessions, host=host)
     async with app.run_test() as pilot:
         await settle(pilot)
-        await pilot.press("n")
+        await pilot.press("n", "enter")
         await settle(pilot)
         sid = host.calls[0][1]
         write(str(tmp_path / "beta"), sid, user("hi", str(tmp_path / "beta")), rec(type="custom-title", customTitle="Real"))
@@ -768,6 +773,8 @@ async def test_new_project_in_a_new_directory(sessions, tmp_path):
         assert not target.exists()  # asks first
         await pilot.press("y")
         await settle(pilot)
+        await pilot.press("enter")  # no first message
+        await settle(pilot)
         assert target.is_dir()
         [(_, sid, command)] = host.calls
         assert host.cwds[sid] == str(target) and command.endswith(f"--session-id {sid}")
@@ -794,3 +801,29 @@ async def test_new_project_rejects_a_file_and_cancels(sessions, tmp_path):
         await pilot.press("escape")
         await settle(pilot)
     assert host.calls == []
+
+
+def test_new_with_a_first_message_puts_it_before_the_options():
+    from csm import launch
+    l = launch.new("/p", True, "fix the login bug")
+    assert l.argv[1] == "fix the login bug" and l.argv[2] == "--session-id" and l.argv[-1] == "-w"
+    assert launch.new("/p", prompt="-v is broken").argv[1] == " -v is broken"
+
+
+async def test_new_with_a_message_starts_hidden_and_stays_in_the_list(sessions, tmp_path):
+    host = FakeHost()
+    app = CSM(sessions, host=host)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        await pilot.press("n")
+        await settle(pilot)
+        await pilot.press(*"add tests", "enter", *"then commit")  # enter makes a new line once there's text
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+        [(kind, sid, command)] = host.calls
+        assert kind == "start" and host.cwds[sid] == str(tmp_path / "beta")
+        assert "'add tests\nthen commit' --session-id" in command
+        assert app.query_one(SessionList).has_focus and app.query_one(SessionList).highlighted_option.id == f"s:{sid}"
+        await pilot.press("n", "escape")  # cancel starts nothing
+        await settle(pilot)
+        assert len(host.calls) == 1

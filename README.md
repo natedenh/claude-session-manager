@@ -42,7 +42,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `a` | also show archived sessions (dimmed) |
 | `e` | show every session (5 per project by default) |
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
-| `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists |
+| `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists. It asks for a first message: type one (several lines are fine) and press `ctrl+s`, and the session starts on it in a hidden pane while you stay in the list (`enter` on its row to watch). `enter` on an empty box starts an empty session beside the list, as before. `P` asks too |
 | `tab` / `shift+tab` | open the session that has waited longest for you (permission requests first), so repeated `tab` works through them; `shift+tab` goes back to the one before |
 | `~` | change the style of the activity strip above the status bar: `wave`, `strands` (a braille sine per working session), `equalizer`, `heartbeat` (a beat per working session), `stars`. Clicking the strip does the same. The choice is saved; with nothing working, a new style plays for a few seconds so you can see it |
 | `P` | new session in any directory, such as a project Claude has never run in. Starts at the highlighted project's parent folder; `tab` completes, and a missing directory is created after you confirm |

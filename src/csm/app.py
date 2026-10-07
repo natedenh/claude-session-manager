@@ -22,7 +22,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
-from textual.widgets import Footer, Input, Label, OptionList, Static, Switch
+from textual.widgets import Footer, Input, Label, OptionList, Static, Switch, TextArea
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
@@ -73,7 +73,8 @@ HELP = """\
             A session already open in a Ghostty tab or Claude desktop is shown there.
   ctrl+\\    cycle focus: this list, then the sessions beside it top to bottom (tmux);
             with none open, switch between this list and the preview
-  n / N     new session in the highlighted project / in a new worktree
+  n / N     new session in the highlighted project / in a new worktree. Asks for a first message:
+            type one and ctrl+s to start it hidden while you stay here, or enter for an empty session
   P         new session in any directory (tab completes; offers to create a missing one)
   tab       open the session that has waited longest for you (permission first); shift+tab goes back
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
@@ -290,6 +291,40 @@ class DirPrompt(ModalScreen[str | None]):
     @on(Input.Submitted)
     def submit(self, event: Input.Submitted) -> None:
         self.dismiss(event.value.strip() or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class FirstMessage(ModalScreen[str | None]):
+    """Ask what a new session should start on. "" starts it empty, as before; None cancels."""
+    BINDINGS = [Binding("escape", "cancel", show=False), Binding("ctrl+s", "start", show=False)]
+    DEFAULT_CSS = """
+    FirstMessage TextArea { height: 8; margin-top: 1; }
+    """
+
+    class Box(TextArea):
+        async def _on_key(self, event) -> None:
+            if event.key == "enter" and not self.text.strip():  # nothing typed: start it plain
+                event.stop()
+                event.prevent_default()
+                self.screen.dismiss("")
+                return
+            await super()._on_key(event)
+
+    def __init__(self, where: str):
+        super().__init__()
+        self.where = where
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(f"New session in {self.where}: first message (optional)")
+            yield self.Box(soft_wrap=True, show_line_numbers=False)
+            yield Label("[dim]ctrl+s = start; with a message it runs hidden and you stay here\n"
+                        "enter on an empty box = start it beside the list    esc = cancel[/]")
+
+    def action_start(self) -> None:
+        self.dismiss(self.query_one(TextArea).text.strip())
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1274,18 +1309,34 @@ class CSM(App[Session | None]):
         s = self.by_id.get(key)
         return p.project if p else s.project if s else None
 
-    def begin(self, l: Launch, project: str) -> None:
+    def begin(self, l: Launch, project: str, hidden: bool = False) -> None:
         if not os.path.isdir(l.cwd):
             self.notify(f"{tilde(l.cwd)} no longer exists", severity="error")
             return
         if self.host:
             self.pending[l.focus_id] = Pending(l.focus_id, project, l)
             self.focus_id = l.focus_id
+        if hidden and self.host:  # it has its instructions; stay in the list
+            try:
+                self.host.start(l.focus_id, l.cwd, l.command, l.label[:40])
+            except subprocess.CalledProcessError as e:
+                self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
+            self.poll_host()
+            self.rebuild()
+            self.notify(f"Started in {os.path.basename(project) or project}; enter to watch it", timeout=3)
+            return
         self.start_launch(l)
+
+    def new_in(self, project: str, worktree: bool = False) -> None:
+        """Ask for a first message, then start a new session in the project."""
+        def done(text: str | None) -> None:
+            if text is not None:
+                self.begin(launch.new(project, worktree, text), project, hidden=bool(text))
+        self.push_screen(FirstMessage(tilde(project) + (" (new worktree)" if worktree else "")), done)
 
     def action_new(self, worktree: bool = False) -> None:
         if project := self.current_project():
-            self.begin(launch.new(project, worktree), project)
+            self.new_in(project, worktree)
 
     def action_new_project(self) -> None:
         """New session in any directory, including one Claude has never run in (or one to create)."""
@@ -1302,14 +1353,14 @@ class CSM(App[Session | None]):
             except OSError as e:
                 self.notify(f"Couldn't create {tilde(path)}: {e.strerror}", severity="error")
                 return
-            self.begin(launch.new(path), path)
+            self.new_in(path)
 
         def done(text: str | None) -> None:
             if not text:
                 return
             path = os.path.abspath(os.path.expanduser(text))
             if os.path.isdir(path):
-                self.begin(launch.new(path), path)
+                self.new_in(path)
             elif os.path.exists(path):
                 self.notify(f"{tilde(path)} isn't a directory", severity="error")
             else:
