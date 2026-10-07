@@ -8,6 +8,8 @@ Our own state (archived sessions, collapsed projects) and a parse cache live out
 from __future__ import annotations
 
 import json
+from collections import Counter
+from datetime import datetime
 import os
 import re
 import shutil
@@ -20,7 +22,7 @@ from . import autoarchive
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 5  # bump whenever parse_session changes
+CACHE_VERSION = 6  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -73,6 +75,13 @@ class Session:
     context_tokens: int | None = None  # size of the last main-thread turn's context
     context_model: str | None = None
     forked_from: str | None = None  # set by load_sessions, not cached
+    # History, in local time: minutes with any activity per day and per hour of the day,
+    # cost and lines added per day, and how often each skill was used.
+    active: dict[str, int] = field(default_factory=dict)  # "2026-10-07": minutes
+    hours: list[int] = field(default_factory=lambda: [0] * 24)
+    day_cost: dict[str, float] = field(default_factory=dict)
+    day_lines: dict[str, int] = field(default_factory=dict)
+    skills: dict[str, int] = field(default_factory=dict)
 
     @property
     def project_name(self) -> str:
@@ -144,16 +153,45 @@ def context_window(model: str | None, tokens: int = 0) -> int:
     return 1_000_000 if "[1m]" in (model or "") or tokens > 200_000 else 200_000
 
 
+def _local(minute: str, memo: dict[str, tuple[str, int]]) -> tuple[str, int] | None:
+    """("YYYY-MM-DD", hour) in local time for a UTC "YYYY-MM-DDTHH:MM" prefix."""
+    if minute not in memo:
+        try:
+            t = datetime.fromisoformat(minute + ":00+00:00").astimezone()
+            memo[minute] = (t.strftime("%Y-%m-%d"), t.hour)
+        except ValueError:
+            memo[minute] = None
+    return memo[minute]
+
+
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
     first_uuid = copied_from = last_usage = None
     cwds: list[str] = []  # distinct cwds, in first-seen order
+    minutes: set[str] = set()
+    memo: dict[str, tuple[str, int]] = {}
+    last_ts: str | None = None
+    prev_cost, prev_lines = 0.0, 0
+    day_cost: dict[str, float] = {}
+    day_lines: dict[str, int] = {}
+    skills: Counter = Counter()
     st = path.stat()
     try:
         with open(path, errors="replace") as f:
             for line in f:
-                if started is None and (m := TIMESTAMP_RE.search(line)):
-                    started = m.group(1)
+                if m := TIMESTAMP_RE.search(line):
+                    last_ts = m.group(1)
+                    if started is None:
+                        started = last_ts
+                    if '"isSidechain":true' not in line:
+                        minutes.add(last_ts[:16])
+                if '"name":"Skill"' in line and '"type":"assistant"' in line:
+                    try:
+                        for c in json.loads(line).get("message", {}).get("content") or []:
+                            if isinstance(c, dict) and c.get("name") == "Skill" and (k := (c.get("input") or {}).get("skill")):
+                                skills[k] += 1
+                    except (ValueError, AttributeError):
+                        pass
                 if first_uuid is None and (m := UUID_RE.search(line)):
                     first_uuid = m.group(1)
                 if copied_from is None and (m := SESSION_ID_RE.search(line)) and m.group(1) != path.stem:
@@ -187,6 +225,18 @@ def parse_session(path: Path) -> Session | None:
                     relocated = d.get("relocatedCwd") or relocated
                 elif t == "cost-state":
                     cost = d.get("totalCostUSD", cost)
+                    # Running totals, without a timestamp: the growth since the last one belongs to
+                    # the time of the record before.
+                    now_cost, now_lines = d.get("totalCostUSD") or 0.0, d.get("totalLinesAdded") or 0
+                    day = (last_ts or "")[:10]
+                    if day and isinstance(now_cost, (int, float)) and isinstance(now_lines, int):
+                        # Only growth counts: a total that drops is a new process (or two writing in
+                        # turns), and whatever it adds from there shows up as growth again.
+                        grew, added = max(0.0, now_cost - prev_cost), max(0, now_lines - prev_lines)
+                        if (lt := _local(last_ts[:16], memo)) and (grew or added):
+                            day_cost[lt[0]] = day_cost.get(lt[0], 0.0) + grew
+                            day_lines[lt[0]] = day_lines.get(lt[0], 0) + added
+                        prev_cost, prev_lines = now_cost, now_lines
                 elif t == "user" and first_prompt is None and not d.get("isMeta"):
                     text = message_text(d.get("message", {}).get("content"))
                     if is_prompt(text):
@@ -194,6 +244,12 @@ def parse_session(path: Path) -> Session | None:
     except OSError:
         return None
     context_tokens, context_model = context_of(last_usage)
+    active: dict[str, int] = {}
+    hours = [0] * 24
+    for minute in minutes:
+        if lt := _local(minute, memo):
+            active[lt[0]] = active.get(lt[0], 0) + 1
+            hours[lt[1]] += 1
     title = custom or ai or first_prompt
     if not title:
         return None  # empty or aborted session
@@ -219,6 +275,8 @@ def parse_session(path: Path) -> Session | None:
         mtime=st.st_mtime, size=st.st_size, first_uuid=first_uuid, copied_from=copied_from,
         context_tokens=context_tokens, context_model=context_model,
         born=getattr(st, "st_birthtime", st.st_ctime),
+        active=active, hours=hours, day_cost={k: round(v, 4) for k, v in day_cost.items()},
+        day_lines=day_lines, skills=dict(skills),
     )
 
 

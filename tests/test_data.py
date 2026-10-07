@@ -229,3 +229,35 @@ def test_viewers_map_background_jobs_to_attached_terminals():
             "lone": data.LiveSession(3, "lone", "idle", "cli", kind="bg", job_id="j2"),
             "gone": data.LiveSession(4, "gone", "idle", "cli", parked_job_id="j9")}
     assert data.viewers(live) == {"b": "t"}
+
+
+def test_history_by_local_day_hour_cost_lines_and_skills(paths, write, monkeypatch, tmp_path):
+    monkeypatch.setenv("TZ", "America/Chicago")
+    time.tzset()
+    try:
+        def at(ts, **kw):
+            return rec(timestamp=ts, **kw)
+        cwd = str(tmp_path)
+        f = write(cwd, "h1",
+                  user("hi", cwd),  # 2026-09-30T16:05Z = 11:05 local
+                  at("2026-09-30T16:05:50Z", type="assistant", message={"content": [
+                      {"type": "tool_use", "name": "Skill", "input": {"skill": "browser-test"}}]}),
+                  rec(type="cost-state", totalCostUSD=1.5, totalLinesAdded=10),
+                  at("2026-09-30T16:07:00Z", type="assistant", message={"content": "ok"}),
+                  at("2026-09-30T16:08:00Z", type="assistant", isSidechain=True, message={"content": "sub"}),
+                  at("2026-10-01T04:30:00Z", type="user", message={"content": "late"}),  # 23:30 on the 30th locally
+                  at("2026-10-01T15:00:00Z", type="user", message={"content": "next day"}),
+                  rec(type="cost-state", totalCostUSD=1.0, totalLinesAdded=4),  # a new process: a drop adds nothing
+                  rec(type="cost-state", totalCostUSD=1.25, totalLinesAdded=6),
+                  at("2026-10-01T15:00:30Z", type="assistant", message={"content": [
+                      {"type": "tool_use", "name": "Skill", "input": {"skill": "browser-test"}}]}))
+        s = data.parse_session(f)
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+    # 11:05, 11:07 and 23:30 on the 30th (the sidechain minute doesn't count); 10:00 on the 1st
+    assert s.active == {"2026-09-30": 3, "2026-10-01": 1}
+    assert s.hours[11] == 2 and s.hours[23] == 1 and s.hours[10] == 1 and sum(s.hours) == 4
+    assert s.day_cost == {"2026-09-30": 1.5, "2026-10-01": 0.25}
+    assert s.day_lines == {"2026-09-30": 10, "2026-10-01": 2}
+    assert s.skills == {"browser-test": 2}

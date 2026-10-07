@@ -827,3 +827,23 @@ async def test_new_with_a_message_starts_hidden_and_stays_in_the_list(sessions, 
         await pilot.press("n", "escape")  # cancel starts nothing
         await settle(pilot)
         assert len(host.calls) == 1
+
+
+def test_sparkline_scales_and_marks_quiet_days():
+    from csm.app import sparkline
+    assert sparkline([0] * 7, 0).plain == ""
+    assert sparkline([0, 1, 0, 50, 100, 0, 25], 100).plain == "   ▁ ▅█ ▃"
+
+
+async def test_project_headers_show_the_last_week(sessions):
+    from datetime import date, timedelta
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        today = date.today()
+        app.by_id["a1"].active = {today.isoformat(): 60, (today - timedelta(days=6)).isoformat(): 30}
+        app.rebuild()
+        header = next(o for o in app.query_one(SessionList).options if o.id and o.id.endswith("/alpha"))
+        assert header.prompt.plain.endswith("  ▅     █")
+        beta = next(o for o in app.query_one(SessionList).options if o.id and o.id.endswith("/beta"))
+        assert "▁" not in beta.prompt.plain  # nothing recorded: no sparkline

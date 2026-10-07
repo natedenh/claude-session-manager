@@ -88,7 +88,25 @@ def starfield(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[s
     return "".join(out), light
 
 
-STYLES = ("wave", "strands", "equalizer", "heartbeat", "stars")
+def scanner(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[str, list[float]]:
+    """KITT's scanner: a light sweeping back and forth, slowing into each end, trailing a fade.
+    The trail is where the light was a moment ago, so it flips sides at each bounce by itself.
+    More working sessions make the light wider."""
+    light = [0.0] * width
+    if width <= 0:
+        return "", light
+    trail, half = 10, min(n, 4) // 2
+    for k in range(trail):
+        t = (phase - k * 0.06) * 0.55
+        head = (1 - math.cos(t)) / 2 * (width - 1)
+        g = (1 - k / trail) ** 1.8
+        for x in range(round(head) - half, round(head) + half + 1):
+            if 0 <= x < width:
+                light[x] = max(light[x], g)
+    return "".join("━" if g > 0.05 else "─" for g in light), light
+
+
+STYLES = ("wave", "strands", "equalizer", "heartbeat", "stars", "knight rider")
 
 
 def glow(width: int, phase: float, sparks: int) -> list[float]:
@@ -169,6 +187,8 @@ class Activity(Static):
             return heartbeat(n, self.phase, self.amp, busy)
         if self.kind == "stars":
             return starfield(n, self.phase, self.amp, busy)
+        if self.kind == "knight rider":
+            return scanner(n, self.phase, self.amp, busy)
         return wave(n, self.phase, self.amp, energy), glow(n, self.phase, sparks)
 
     def draw(self) -> None:
@@ -180,10 +200,11 @@ class Activity(Static):
         n = max(0, width - len(label))
         line, light = self.frame(n)
         text = Text(label, style="warn")
-        unlit = UNLIT if self.app.current_theme.dark else UNLIT_ON_LIGHT
+        red = self.kind == "knight rider"
+        unlit = (KITT_OFF if red else UNLIT) if self.app.current_theme.dark else (KITT_OFF_ON_LIGHT if red else UNLIT_ON_LIGHT)
         for ch, g in zip(line, light):
             g *= self.amp
-            text.append(ch, unlit if g < 0.12 else lit(g))
+            text.append(ch, unlit if g < 0.12 else lit(g, KITT if red else (EMBER, SPARK)))
         self.update(text)
 
 
@@ -191,6 +212,12 @@ UNLIT = Style(color="yellow", dim=True)  # the terminal's own yellow, like the r
 UNLIT_ON_LIGHT = Style(color=Color.parse("#b0905a"))  # light themes often make yellow too pale to see
 
 
-def lit(g: float) -> Style:
-    rgb = tuple(round(a + (b - a) * g) for a, b in zip(EMBER, SPARK))
+KITT = ((0x5A, 0x08, 0x08), (0xFF, 0x2A, 0x1A))  # dim to blazing red
+KITT_OFF = Style(color=Color.parse("#3a1010"))
+KITT_OFF_ON_LIGHT = Style(color=Color.parse("#d8b4b0"))
+
+
+def lit(g: float, ramp: tuple = (EMBER, SPARK)) -> Style:
+    lo, hi = ramp
+    rgb = tuple(round(a + (b - a) * g) for a, b in zip(lo, hi))
     return Style(color=Color.from_rgb(*rgb), bold=g > 0.6)

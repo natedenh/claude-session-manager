@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -99,14 +99,14 @@ HELP = """\
   L         what the session loaded: plugins, skills (✓ used), MCP servers, agents, hooks, CLAUDE.md files
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
-  ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars
+  ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars, knight rider
   ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
 
 [b]Icons[/b]
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [warn]●[/] live, busy   » shown beside the list
-  on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull
+  on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull   [dim]▁▃▇[/] active minutes, last 7 days
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks); both show how long, ◆ 12m
   [warn]⧗[/] stuck: busy, but nothing written for 10+ minutes (--stuck-minutes)   ⑃ fork   [red]◔[/] context over 80%
   bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
@@ -120,6 +120,25 @@ def git_flags(st: tuple[int, int, int] | None) -> Text:
     dirty, ahead, behind = st
     return Text.assemble(*[("  " + t, style) for t, style, n in
                            ((f"±{dirty}", "warn", dirty), (f"↑{ahead}", "cyan", ahead), (f"↓{behind}", "dim", behind)) if n])
+
+
+SPARK_DAYS = 7
+SPARKS = "▁▂▃▄▅▆▇█"
+
+
+def last_days(n: int = SPARK_DAYS) -> list[str]:
+    """The last n local dates, oldest first, as stored in Session.active."""
+    today = datetime.now().date()
+    return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
+
+
+def sparkline(minutes: list[int], top: int) -> Text:
+    """One bar per day, scaled to `top`; days with any activity get at least the lowest bar."""
+    if not any(minutes):
+        return Text()
+    bars = "".join(" " if not m else SPARKS[max(0, min(len(SPARKS) - 1, round(m / top * (len(SPARKS) - 1))))]
+                   for m in minutes)
+    return Text("  " + bars, style="dim")
 
 
 def pr_style(st: prs.PRStatus | None) -> str:
@@ -863,6 +882,14 @@ class CSM(App[Session | None]):
             if key == PINNED:
                 return []
             return [p for ps in pending.values() for p in ps] if key == "" else pending.get(key, [])
+        days = last_days()
+        recent: dict[str, list[int]] = {}  # project -> active minutes on each of the last days
+        for x in self.sessions:
+            if x.active:
+                row = recent.setdefault(x.project, [0] * len(days))
+                for i, d in enumerate(days):
+                    row[i] += x.active.get(d, 0)
+        top = max((m for row in recent.values() for m in row), default=0)  # one scale, so projects compare
         options: list[Option | None] = []
         if not self.narrowed:
             options.append(Option(self.summary_row(), id="S:summary"))  # groups add their own spacer
@@ -879,7 +906,8 @@ class CSM(App[Session | None]):
             if name:
                 options.append(Option(Text.assemble(
                     ("▸ " if collapsed else "▾ ", "dim"), (name, "bold"), (f"  {len(sessions) + len(new)}", "dim"),
-                    git_flags(self.git_state.get(project))), id=f"p:{project}"))
+                    git_flags(self.git_state.get(project)),
+                    sparkline(recent.get(project, []), top) if project != PINNED else ""), id=f"p:{project}"))
             for p in [] if collapsed else new:
                 options.append(Option(self.pending_row(p), id=f"s:{p.id}"))
             for s in shown:
