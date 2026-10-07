@@ -74,6 +74,7 @@ HELP = """\
             with none open, switch between this list and the preview
   n / N     new session in the highlighted project / in a new worktree
   P         new session in any directory (tab completes; offers to create a missing one)
+  tab       open the session that has waited longest for you (permission first); shift+tab goes back
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
@@ -194,6 +195,9 @@ class SessionList(OptionList):
     BINDINGS = [
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
+        # Here rather than on the app, so tab still completes paths in dialogs.
+        Binding("tab", "app.next_waiting", "Next waiting", show=False),
+        Binding("shift+tab", "app.next_waiting(True)", show=False),
     ]
     # Rows of sessions open beside the list get a soft background across the whole row.
     COMPONENT_CLASSES = {"session-list--open"}
@@ -482,6 +486,7 @@ class CSM(App[Session | None]):
         self.search_query = ""
         self.hits: dict[str, list[str]] | None = None
         self.expanded: set[str] = set()
+        self.trail: list[str] = []  # sessions tab jumped to, for shift+tab
         self.marked: set[str] = set()  # session ids; in memory only
         self.by_id: dict[str, Session] = {}
         self.pending: dict[str, Pending] = {}
@@ -1276,6 +1281,28 @@ class CSM(App[Session | None]):
     def action_fork(self) -> None:
         if s := self.selected():
             self.begin(launch.fork(s.id, s.cwd, s.title), s.project)
+
+    def action_next_waiting(self, back: bool = False) -> None:
+        """Open the session that has needed you longest (permission requests first); shift+tab goes back."""
+        sessions = {s.id: s for s in self.sessions}
+        if back:
+            if self.trail:
+                self.trail.pop()
+            if not self.trail or not (s := sessions.get(self.trail[-1])):
+                self.notify("No earlier one", timeout=2)
+                return
+        else:
+            queue = sorted((t, sid) for sid, t in self.attention().items() if sid in sessions and sid not in self.permission)
+            asking = sorted((t, sid) for sid, t in self.permission_at.items() if sid in sessions)
+            if not (queue or asking):
+                self.notify("Nothing waiting", timeout=2)
+                return
+            s = sessions[(asking or queue)[0][1]]
+            self.trail = [*self.trail, s.id][-20:]
+        self.expanded.add(s.project)  # it may sit past the first few rows of its project
+        self.focus_id = s.id
+        self.resume(s)
+        self.rebuild()
 
     def action_open_also(self) -> None:
         if not self.host:

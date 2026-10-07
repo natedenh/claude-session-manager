@@ -132,3 +132,31 @@ async def test_waiting_shows_how_long_and_redraws_as_it_grows(sessions, sent):
         app.poll_live()
         await settle(pilot)
         assert "2h Fix login bug" in app.query_one(SessionList).get_option("s:a1").prompt.plain
+
+
+async def test_tab_opens_the_longest_waiting_then_the_next(sessions, sent, monkeypatch):
+    import time
+    from csm.app import SessionList
+    for i, sid in enumerate(("a1", "a2", "b1")):
+        (sessions.live / f"{i}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": sid, "status": "idle"}))
+    app = CSM(sessions)
+    opened = []
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        monkeypatch.setattr(app, "resume_flow", lambda s: opened.append(s.id))
+        await pilot.press("tab")
+        assert opened == [] and app.trail == []  # nothing waiting
+        now = time.time()
+        app.waiting.update({"a1": now - 60, "b1": now - 600})
+        app.permission, app.permission_at = {"a2": "Bash"}, {"a2": now - 5}
+        await pilot.press("tab")
+        await pilot.press("tab")
+        await pilot.press("tab")
+        await settle(pilot)
+        assert opened == ["a2", "b1", "a1"]  # permission first, then the longest wait
+        assert app.query_one(SessionList).highlighted_option.id == "s:a1"
+        await pilot.press("tab")
+        assert len(opened) == 3  # all handled
+        await pilot.press("shift+tab")
+        await settle(pilot)
+        assert opened[-1] == "b1" and app.query_one(SessionList).highlighted_option.id == "s:b1"
