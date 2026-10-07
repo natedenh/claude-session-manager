@@ -84,3 +84,45 @@ async def test_working_dots_pulse_and_idle_dots_dont(sessions):  # noqa: F811
             seen_b1.add(str(dot("b1")))
             seen_a2.add(str(dot("a2")))
         assert seen_b1 == {"warn", "warn.dim"} and seen_a2 == {"green"}
+
+
+def test_every_style_fills_the_width_and_moves():
+    from csm.activity import STYLES, Activity
+    bar = Activity()
+    bar.amp, bar.busy = 1.0, 2
+    for kind in STYLES:
+        bar.kind = kind
+        bar.phase = 0.0
+        line, light = bar.frame(50)
+        assert len(line) == 50 and len(light) == 50, kind
+        bar.phase = 2.0
+        assert bar.frame(50)[0] != line, kind
+
+
+def test_strands_draws_one_sine_per_session():
+    from csm.activity import strands
+    one, three = strands(30, 1.0, 1.0, 1), strands(30, 1.0, 1.0, 3)
+    dots = lambda s: sum(bin(ord(c) - 0x2800).count("1") for c in s)
+    assert all(0x2800 <= ord(c) <= 0x28FF for c in one + three) and dots(three) > dots(one)
+
+
+async def test_tilde_cycles_the_style_saves_it_and_plays_it(sessions):  # noqa: F811
+    from csm import data
+    from csm.activity import STYLES
+    app = CSM(sessions)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle(pilot)
+        bar = app.query_one(Activity)
+        assert bar.kind == "wave" and not bar.active
+        await pilot.press("~")
+        await pilot.pause(0.3)
+        assert bar.kind == STYLES[1] and bar.active and str(bar.render()).startswith(f"0 working · {STYLES[1]}")
+        assert data.State(sessions.state).wave == STYLES[1]
+        await pilot.pause(5.5)  # the demo, then easing back out
+        assert not bar.active and bar.amp == 0.0  # back to the flat line
+        await pilot.click("#activity")
+        assert bar.kind == STYLES[2]
+    app = CSM(sessions)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle(pilot)
+        assert app.query_one(Activity).kind == STYLES[2]  # remembered

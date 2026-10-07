@@ -485,6 +485,7 @@ class State:
         self.collapsed: set[str] = set(d.get("collapsed", []))
         self.pinned: set[str] = set(d.get("pinned", []))
         self.flat: bool = bool(d.get("flat", False))
+        self.wave: str = d.get("wave") if isinstance(d.get("wave"), str) else ""  # activity strip style
         self.keep: set[str] = set(d.get("keep", []))
         self.auto_archive: dict = autoarchive.normalize(d.get("auto_archive"))
         self.tags: dict[str, list[str]] = {k: normalize_tags(v) for k, v in (d.get("tags") or {}).items()
@@ -497,7 +498,7 @@ class State:
 
     def _snapshot(self) -> dict:
         return {"archived": set(self.archived), "collapsed": set(self.collapsed), "pinned": set(self.pinned),
-                "flat": self.flat, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
+                "flat": self.flat, "wave": self.wave, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
                 "tags": dict(self.tags), "notes": dict(self.notes), "when_idle": dict(self.when_idle)}
 
     def reload(self) -> bool:
@@ -524,8 +525,9 @@ class State:
                     merged.pop(k, None)
                 elif mine[f][k] != base[f].get(k):
                     merged[k] = mine[f][k]
-        if mine["flat"] != base["flat"]:
-            self.flat = mine["flat"]
+        for f in ("flat", "wave"):
+            if mine[f] != base[f]:
+                setattr(self, f, mine[f])
 
     def set_tags(self, sid: str, tags: list[str]) -> None:
         if tags:
@@ -542,7 +544,7 @@ class State:
     def save(self) -> None:
         self._merge()
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
-                                "pinned": sorted(self.pinned), "flat": self.flat,
+                                "pinned": sorted(self.pinned), "flat": self.flat, "wave": self.wave,
                                 "keep": sorted(self.keep), "auto_archive": self.auto_archive,
                                 "tags": self.tags, "notes": self.notes, "when_idle": self.when_idle})
         self.base = self._snapshot()

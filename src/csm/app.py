@@ -27,7 +27,7 @@ from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
 from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux, worktrees
-from .activity import Activity
+from .activity import STYLES as WAVES, Activity
 from .costs import Costs
 from .data import LiveSession, Message, Session, normalize_tags
 from .launch import Launch, Pending
@@ -98,6 +98,7 @@ HELP = """\
   L         what the session loaded: plugins, skills (✓ used), MCP servers, agents, hooks, CLAUDE.md files
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
+  ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars
   ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
 
@@ -447,6 +448,7 @@ class CSM(App[Session | None]):
         Binding("dollar_sign", "costs", "Costs"),
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("S", "summary", "Summary", show=False),
+        Binding("tilde", "next_wave", "Wave style", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -508,7 +510,7 @@ class CSM(App[Session | None]):
                 yield Static(id="meta")
                 with VerticalScroll(id="transcript"):
                     yield Static(id="messages")
-        yield Activity(id="activity")
+        yield Activity(self.state.wave, id="activity")
         yield Static("Loading sessions…", id="status")
         yield Footer()
 
@@ -581,6 +583,8 @@ class CSM(App[Session | None]):
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
         changed = self.state.reload() or changed  # archived, pinned, tags... edited elsewhere
+        if (bar := self.query_one(Activity)).kind != (self.state.wave or WAVES[0]):
+            bar.set_style(self.state.wave)
         before = set(self.waiting), dict(self.permission), set(self.stuck)
         self.track_hooks(live)
         self.track(live)
@@ -1338,6 +1342,14 @@ class CSM(App[Session | None]):
         self.focus_id = s.id
         self.resume(s)
         self.rebuild()
+
+    def action_next_wave(self) -> None:
+        bar = self.query_one(Activity)
+        kind = WAVES[(WAVES.index(bar.kind) + 1) % len(WAVES)]
+        bar.set_style(kind)
+        self.state.wave = kind
+        self.state.save()
+        self.notify(f"Activity style: {kind}  ({WAVES.index(kind) + 1} of {len(WAVES)}; ~ or click for the next)", timeout=2)
 
     def action_open_also(self) -> None:
         if not self.host:

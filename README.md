@@ -44,6 +44,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `o` / `O` | resume in a new Ghostty tab / window (scripts your running Ghostty) |
 | `n` / `N` | new session / new session in a worktree (`-w`), in the highlighted project; shown as a row until its transcript exists |
 | `tab` / `shift+tab` | open the session that has waited longest for you (permission requests first), so repeated `tab` works through them; `shift+tab` goes back to the one before |
+| `~` | change the style of the activity strip above the status bar: `wave`, `strands` (a braille sine per working session), `equalizer`, `heartbeat` (a beat per working session), `stars`. Clicking the strip does the same. The choice is saved; with nothing working, a new style plays for a few seconds so you can see it |
 | `P` | new session in any directory, such as a project Claude has never run in. Starts at the highlighted project's parent folder; `tab` completes, and a missing directory is created after you confirm |
 | `f` | fork the highlighted session (`--fork-session`), named "<title> (fork)" |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
