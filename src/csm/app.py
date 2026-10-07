@@ -40,6 +40,7 @@ PINNED = "__pinned__"  # pseudo-project key for the Pinned group
 PULSE = 0.8  # seconds per half of a working session's dot pulse
 WARN_ON_LIGHT = "#9a6700"  # dark amber: readable on light backgrounds
 STATUS_STYLE = {"idle": "green", "busy": "warn"}
+STUCK_MINUTES = 10  # busy with no transcript writes for this long looks stuck; CSM_STUCK_MINUTES, 0 = off
 FILTER_NAMES = {"pr": "PRs", "worktree": "worktrees", "live": "live", "waiting": "waiting"}
 MAX_MESSAGE_CHARS = 2500
 THEMES = ("ansi-light", "ansi-dark")  # Textual's themes that use the terminal's own colors
@@ -64,7 +65,7 @@ HELP = """\
   /         filter by title, project, branch or note as you type; #tag matches tags
   s         search transcript text (enter runs it)
   esc       clear the filter, search and marks
-  p w l !   only PR-linked / worktree / live / waiting-for-you sessions
+  p w l !   only PR-linked / worktree / live / waiting-for-you (or stuck) sessions
   a         also show archived sessions (by csm, Claude desktop or the auto rule)
 
 [b]Open[/b]
@@ -104,7 +105,8 @@ HELP = """\
   [green]⇄[/] PR linked: [warn]pending[/], [red]failing[/], [magenta]merged[/], [dim]closed / draft[/]    [magenta]⑂[/] worktree   [dim]○[/] other
   [green]●[/] live, idle   [warn]●[/] live, busy   » shown beside the list
   on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull
-  ◆ waiting for you   [bold red]?[/] needs permission (with hooks); both show how long, ◆ 12m   ⑃ fork   [red]◔[/] context over 80%
+  ◆ waiting for you   [bold red]?[/] needs permission (with hooks); both show how long, ◆ 12m
+  [warn]⧗[/] stuck: busy, but nothing written for 10+ minutes (--stuck-minutes)   ⑃ fork   [red]◔[/] context over 80%
   bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
 
@@ -475,6 +477,11 @@ class CSM(App[Session | None]):
         self.waiting: dict[str, float] = {}
         self.permission: dict[str, str] = {}  # from hooks: session id -> what it's asking for
         self.permission_at: dict[str, float] = {}
+        self.stuck: dict[str, float] = {}  # busy but quiet: session id -> when its transcript last changed
+        try:
+            self.stuck_minutes = float(os.environ.get("CSM_STUCK_MINUTES") or STUCK_MINUTES)
+        except ValueError:
+            self.stuck_minutes = STUCK_MINUTES
         self.wait_labels: dict[str, str] = {}  # what the rows show, to redraw when a minute ticks over
         self.hook_waiting: set[str] = set()
         self.hook_notified: dict[str, float] = {}
@@ -574,11 +581,12 @@ class CSM(App[Session | None]):
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
         changed = self.state.reload() or changed  # archived, pinned, tags... edited elsewhere
-        before = set(self.waiting), dict(self.permission)
+        before = set(self.waiting), dict(self.permission), set(self.stuck)
         self.track_hooks(live)
         self.track(live)
+        self.track_stuck(live)
         changed = self.run_when_idle(live) or changed
-        if (changed or (set(self.waiting), self.permission) != before or self.labels() != self.wait_labels
+        if (changed or (set(self.waiting), self.permission, set(self.stuck)) != before or self.labels() != self.wait_labels
                 or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}
                 or data.viewers(live) != self.viewers):
             self.live = live
@@ -615,12 +623,32 @@ class CSM(App[Session | None]):
                 self.send_notification(f"{title} needs permission" if perm else f"{title} is waiting")
             self.hook_notified[sid] = h["at"]
 
+    def track_stuck(self, live: dict[str, LiveSession]) -> None:
+        """Busy sessions whose transcript hasn't changed for a while. Long builds look like this too."""
+        if self.stuck_minutes <= 0:
+            return
+        paths = {s.id: s for s in self.sessions}
+        stuck = {}
+        for sid, l in live.items():
+            if l.status == "idle" or sid in self.permission or not (s := paths.get(sid)):
+                continue
+            try:
+                last = os.stat(s.path).st_mtime
+            except OSError:
+                continue
+            if time.time() - last >= self.stuck_minutes * 60:
+                stuck[sid] = last
+        for sid in stuck.keys() - self.stuck.keys():  # once each time it goes quiet
+            if self.notifications and sid != self.shown_id:
+                self.send_notification(f"{paths[sid].title} looks stuck: nothing written for {waited(stuck[sid])}")
+        self.stuck = stuck
+
     def attention(self) -> dict[str, float]:
         """Sessions that need you -> since when."""
         return {**self.waiting, **self.permission_at}
 
     def labels(self) -> dict[str, str]:
-        return {sid: waited(t) for sid, t in self.attention().items()}
+        return {sid: waited(t) for sid, t in {**self.stuck, **self.attention()}.items()}
 
     @work(thread=True, group="notify")
     def send_notification(self, message: str) -> None:
@@ -656,7 +684,7 @@ class CSM(App[Session | None]):
                 continue
             if "live" in self.filters and s.id not in self.live:
                 continue
-            if "waiting" in self.filters and s.id not in self.waiting and s.id not in self.permission:
+            if "waiting" in self.filters and not ({s.id} & (self.waiting.keys() | self.permission.keys() | self.stuck.keys())):
                 continue
             if self.hits is not None and s.id not in self.hits:
                 continue
@@ -734,7 +762,7 @@ class CSM(App[Session | None]):
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
         then = Text(f"  @{q['do']}", style="cyan") if (q := self.state.when_idle.get(s.id)) else Text()
-        wait = (f"{waited(t)} ", dot[1]) if (t := self.attention().get(s.id)) else ""
+        wait = (f"{waited(t)} ", dot[1]) if (t := self.attention().get(s.id) or self.stuck.get(s.id)) else ""
         return Text.assemble(mark, dot, icon, wait, (s.title, title), fork, bg, then, context_flag(s), tags, project)
 
     def fork_tag(self, s: Session) -> Text:
@@ -756,6 +784,8 @@ class CSM(App[Session | None]):
             return "? ", "bold red"
         if s.id in self.waiting:
             return "◆ ", f"{style}.bold" if style == "warn" else f"bold {style}"
+        if s.id in self.stuck:
+            return "⧗ ", "warn"
         if live and live.status != "idle" and not self.pulse_on:  # working: a slow pulse
             return "● ", "warn.dim" if style == "warn" else f"dim {style}"
         return ("● " if live else "  "), style
@@ -850,6 +880,8 @@ class CSM(App[Session | None]):
         parts = [f"{count} sessions", f"{len(self.live)} live"]
         if self.permission:
             parts.append(f"{len(self.permission)} need permission")
+        if self.stuck:
+            parts.append(f"{len(self.stuck)} stuck")
         if self.waiting:
             parts.append(f"{len(self.waiting)} waiting (longest {waited(min(self.waiting.values()))})")
         if only := sorted(self.filters - {"archived"}):
@@ -1001,6 +1033,9 @@ class CSM(App[Session | None]):
             lines.append(Text(f"? needs permission{since}: {self.permission[s.id]}", style="bold red"))
         elif s.id in self.waiting:
             lines.append(Text(f"◆ waiting for you for {waited(self.waiting[s.id])}", style="bold"))
+        elif s.id in self.stuck:
+            lines.append(Text(f"⧗ looks stuck: busy, but nothing written for {waited(self.stuck[s.id])}"
+                              " (or a long command is running)", style="warn"))
         if s.pr_url:
             st = self.pr_status.get(s.pr_url)
             lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
@@ -1671,12 +1706,16 @@ def main() -> None:
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
     ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
     ap.add_argument("--no-notify", action="store_true", help="don't send a desktop notification when a session is waiting")
+    ap.add_argument("--stuck-minutes", help=f"flag a busy session with no output for this long; default {STUCK_MINUTES}, "
+                                            "0 turns it off. Also CSM_STUCK_MINUTES.")
     ap.add_argument("--export-dir", help="where E writes Markdown exports; default ~/Downloads/claude-sessions. "
                                          "Also CSM_EXPORT_DIR.")
     ap.add_argument("--theme", help="Textual theme; default ansi-light or ansi-dark (follows macOS), "
                                     "which use the terminal's own colors and background. Also CSM_THEME.")
     ap.add_argument("--sidebar", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.stuck_minutes:
+        os.environ["CSM_STUCK_MINUTES"] = args.stuck_minutes
     if args.export_dir:
         os.environ["CSM_EXPORT_DIR"] = os.path.abspath(os.path.expanduser(args.export_dir))
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
@@ -1687,6 +1726,7 @@ def main() -> None:
     if not args.no_tmux and tmux.available():
         extra = (["--archived"] if args.archived else []) + (["--no-notify"] if args.no_notify else []) + (["--theme", args.theme] if args.theme else [])
         extra += ["--export-dir", os.environ["CSM_EXPORT_DIR"]] if args.export_dir else []
+        extra += ["--stuck-minutes", args.stuck_minutes] if args.stuck_minutes else []
         tmux.launch(extra)  # does not return
     focus = None
     while True:

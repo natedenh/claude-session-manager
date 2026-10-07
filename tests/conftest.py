@@ -64,6 +64,12 @@ def fixed_theme(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_stuck(monkeypatch):
+    """Fixture transcripts are decades old, so every busy session would look stuck; tests opt in."""
+    monkeypatch.setenv("CSM_STUCK_MINUTES", "0")
+
+
+@pytest.fixture(autouse=True)
 def sent(monkeypatch):
     """Never write escape sequences to a real tty; collect what would have been sent."""
     from csm import notify

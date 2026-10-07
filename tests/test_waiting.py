@@ -160,3 +160,33 @@ async def test_tab_opens_the_longest_waiting_then_the_next(sessions, sent, monke
         await pilot.press("shift+tab")
         await settle(pilot)
         assert opened[-1] == "b1" and app.query_one(SessionList).highlighted_option.id == "s:b1"
+
+
+async def test_busy_and_quiet_looks_stuck_once(sessions, sent, monkeypatch):
+    import time
+    monkeypatch.setenv("CSM_STUCK_MINUTES", "10")
+    set_status(sessions, "a1", "busy")
+    path = sessions.projects / next(p for p in os.listdir(sessions.projects) if "alpha" in p) / "a1.jsonl"
+    os.utime(path, (time.time(),) * 2)  # just wrote: not stuck
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert app.stuck == {}
+        os.utime(path, (time.time() - 14 * 60,) * 2)
+        app.poll_live()
+        app.poll_live()
+        await settle(pilot)
+        assert set(app.stuck) == {"a1"} and sent == ["Fix login bug looks stuck: nothing written for 14m"]
+        assert app.row(app.by_id["a1"]).plain.startswith("⧗ ○ 14m Fix login bug")
+        assert "1 stuck" in str(app.query_one("#status").render())
+        assert "looks stuck" in "".join(str(r) for r in app.meta(app.by_id["a1"]).renderables)
+        await pilot.press("exclamation_mark")
+        await settle(pilot)
+        assert ids(app) == ["s:a1"]
+        os.utime(path, (time.time(),) * 2)  # it wrote again
+        app.poll_live()
+        assert app.stuck == {}
+        set_status(sessions, "a1", "idle")  # idle sessions are never stuck
+        os.utime(path, (time.time() - 3600,) * 2)
+        app.poll_live()
+        assert app.stuck == {} and len(sent) == 1
