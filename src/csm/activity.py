@@ -97,7 +97,7 @@ def scanner(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[str
         return "", light
     trail, half = 10, min(n, 4) // 2
     for k in range(trail):
-        t = (phase - k * 0.06) * 0.55
+        t = (phase - k * 0.11) * 0.3  # about 4.5 seconds there and back
         head = (1 - math.cos(t)) / 2 * (width - 1)
         g = (1 - k / trail) ** 1.8
         for x in range(round(head) - half, round(head) + half + 1):

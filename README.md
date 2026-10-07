@@ -60,6 +60,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `t` | read the whole transcript; `/` searches, `n` / `N` step through matches, `g` / `G` top / bottom, `esc` closes search then the viewer |
 | `L` | what the session loaded: plugins (with their skills, agents and MCP servers), other skills with ✓ and a count for each one used, MCP servers (failed ones in red), agents, hooks that reported output, CLAUDE.md files |
 | `W` | clean up worktrees (see below) |
+| `I` | stats: Claude time, sessions, cost and lines added for today, this week and last week; your streak of active days; the last 14 days as bars; busiest projects this week; cost by week; active minutes by hour of the day; most-used skills. Claude time adds up each session's active minutes (minutes it wrote anything), so sessions side by side count separately |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |
 | `#` | edit tags (`#waiting-on-chris #blocked`) for the highlighted session; for marked sessions the tags are added to each. Shown dim after the title |

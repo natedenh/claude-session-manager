@@ -29,6 +29,7 @@ from textual.worker import get_current_worker
 from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .costs import Costs
+from .stats import Stats
 from .data import LiveSession, Message, Session, normalize_tags
 from .launch import Launch, Pending
 from .viewer import Viewer
@@ -99,6 +100,7 @@ HELP = """\
   L         what the session loaded: plugins, skills (✓ used), MCP servers, agents, hooks, CLAUDE.md files
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
+  I         stats: Claude time per day, streak, busiest projects, cost by week, hours, top skills
   ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars, knight rider
   ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
@@ -500,6 +502,7 @@ class CSM(App[Session | None]):
         Binding("ctrl+backslash", "toggle_focus", "List / preview", show=False),
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
+        Binding("I", "stats", "Stats", show=False),
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("S", "summary", "Summary", show=False),
         Binding("tilde", "next_wave", "Wave style", show=False),
@@ -1249,6 +1252,9 @@ class CSM(App[Session | None]):
 
     def action_costs(self) -> None:
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
+
+    def action_stats(self) -> None:
+        self.push_screen(Stats(self.sessions))
 
     def action_loadout(self) -> None:
         if (s := self.selected()) is not None:
