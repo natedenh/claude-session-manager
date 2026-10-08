@@ -78,6 +78,7 @@ HELP = """\
             type one and ctrl+s to start it hidden while you stay here, or enter for an empty session
   P         new session in any directory (tab completes; offers to create a missing one)
   tab       open the session that has waited longest for you (permission first); shift+tab goes back
+  ctrl+]    the same from anywhere, even inside a session (tmux): answer one, ctrl+], the next
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
@@ -500,6 +501,7 @@ class CSM(App[Session | None]):
         Binding("escape", "clear", "Clear", show=False),
         Binding("ctrl+r", "reload", "Reload", show=False),
         Binding("ctrl+backslash", "toggle_focus", "List / preview", show=False),
+        Binding("ctrl+right_square_bracket", "next_waiting", "Next waiting", show=False),  # tmux sends it from any pane
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("I", "stats", "Stats", show=False),

@@ -847,3 +847,16 @@ async def test_project_headers_show_the_last_week(sessions):
         assert header.prompt.plain.endswith("  ▅     █")
         beta = next(o for o in app.query_one(SessionList).options if o.id and o.id.endswith("/beta"))
         assert "▁" not in beta.prompt.plain  # nothing recorded: no sparkline
+
+
+async def test_ctrl_bracket_opens_the_next_waiting_one(sessions, monkeypatch):
+    import time
+    app = CSM(sessions)
+    opened = []
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        monkeypatch.setattr(app, "resume_flow", lambda s: opened.append(s.id))
+        app.waiting["b1"] = time.time()
+        app.query_one("#search").focus()  # works wherever focus is
+        await pilot.press("ctrl+right_square_bracket")
+        assert opened == ["b1"]

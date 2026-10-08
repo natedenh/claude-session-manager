@@ -30,6 +30,8 @@ def beside(t):
 def test_config_binds_switch_key_and_drops_prefix(server):
     assert server.run("show", "-gv", "prefix") == "None"
     assert "select-pane -t :.+" in server.run("list-keys", "-T", "root")
+    assert 'select-pane -t "{left}" ; send-keys -t "{left}" C-]' in server.run("list-keys", "-T", "root")
+
 
 
 def test_show_swaps_sessions_and_keeps_them_running(server):
