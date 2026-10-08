@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    # Ubuntu, not macOS: on a private repo macOS minutes count 10x. csm's macOS-only
+    # pieces (Ghostty, osascript, open) are stubbed in the tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: uv sync --locked
+      - name: Test
+        run: uv run pytest -q
