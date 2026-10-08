@@ -1,3 +1,4 @@
+import math
 import json
 import os
 
@@ -92,10 +93,10 @@ def test_every_style_fills_the_width_and_moves():
     bar.amp, bar.busy = 1.0, 2
     for kind in STYLES:
         bar.kind = kind
-        bar.phase = 0.0
+        bar.phase = 5.0  # mid-sweep: knight rider is dark for a moment at each end
         line, light = bar.frame(50)
         assert len(line) == 50 and len(light) == 50, kind
-        bar.phase = 2.0
+        bar.phase = 7.0
         assert bar.frame(50)[0] != line, kind
 
 
@@ -126,3 +127,11 @@ async def test_tilde_cycles_the_style_saves_it_and_plays_it(sessions):  # noqa: 
     async with app.run_test(size=(100, 30)) as pilot:
         await settle(pilot)
         assert app.query_one(Activity).kind == STYLES[2]  # remembered
+
+
+def test_knight_rider_leaves_the_bar_before_turning_back():
+    from csm.activity import scanner
+    lit = lambda ph: any(g > 0.05 for g in scanner(60, ph, 1, 4)[1])
+    assert not lit(0.0)  # past the left edge, turning
+    assert lit(math.pi / 0.23 / 2)  # crossing the middle
+    assert not lit(math.pi / 0.23)  # past the right edge, turning

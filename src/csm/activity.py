@@ -96,9 +96,12 @@ def scanner(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[str
     if width <= 0:
         return "", light
     trail, half = 10, min(n, 4) // 2
+    # Run past both edges far enough for the whole trail to leave before it turns back, so
+    # the bar goes dark for a moment at each end, like KITT's.
+    over = half + 2 + math.ceil(0.03 * width)
     for k in range(trail):
         t = (phase - k * 0.14) * 0.23  # about 6 seconds there and back
-        head = (1 - math.cos(t)) / 2 * (width - 1)
+        head = (1 - math.cos(t)) / 2 * (width - 1 + 2 * over) - over
         g = (1 - k / trail) ** 1.8
         for x in range(round(head) - half, round(head) + half + 1):
             if 0 <= x < width:

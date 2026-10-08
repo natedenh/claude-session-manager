@@ -27,7 +27,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, Switch, Te
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, tmux, worktrees
+from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, brief, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .costs import Costs
 from .stats import Stats
@@ -83,6 +83,8 @@ HELP = """\
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
+  B         continue fresh: a model writes a brief of the session, you edit it, and it opens a new one
+            (named "<title> (continued)"); for when the context is nearly full
   o / O     resume in a new Ghostty tab / window
   c         (tmux) stop the session's claude process
   g         open the session's PR in the browser
@@ -336,14 +338,14 @@ class FirstMessage(ModalScreen[str | None]):
                 return
             await super()._on_key(event)
 
-    def __init__(self, where: str):
+    def __init__(self, where: str, text: str = ""):
         super().__init__()
-        self.where = where
+        self.where, self.text = where, text
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(f"New session in {self.where}: first message (optional)")
-            yield self.Box(soft_wrap=True, show_line_numbers=False)
+            yield Label(f"New session in {self.where}: first message ({'edit as you like' if self.text else 'optional'})")
+            yield self.Box(self.text, soft_wrap=True, show_line_numbers=False)
             yield Label("[dim]ctrl+s = start; with a message it runs hidden and you stay here\n"
                         "enter on an empty box = start it beside the list    esc = cancel[/]")
 
@@ -478,6 +480,7 @@ class CSM(App[Session | None]):
         Binding("R", "reply", "Reply", show=False),
         Binding("vertical_line", "open_also", "Side by side", show=False),
         Binding("f", "fork", "Fork", show=False),
+        Binding("B", "brief", "Continue fresh", show=False),
         Binding("r", "rename", "Rename", show=False),
         Binding("number_sign", "tag", "Tags", show=False),
         Binding("i", "note", "Note", show=False),
@@ -1430,6 +1433,28 @@ class CSM(App[Session | None]):
                 self.push_screen(Confirm(f"Create {tilde(path)}?"), lambda yes: create(path, yes))
 
         self.push_screen(DirPrompt("New session in", start), done)
+
+    def action_brief(self) -> None:
+        if s := self.selected():
+            self.notify(f"Writing a brief of “{s.title}” for a new session…", timeout=4)
+            self.run_brief(s)
+
+    @work(thread=True, exclusive=True, group="brief")
+    def run_brief(self, s: Session) -> None:
+        try:
+            text = brief.write(s)
+        except Exception as e:  # credentials, network, refusal
+            self.call_from_thread(self.notify, f"Couldn't write a brief: {type(e).__name__}: {e}"[:300], severity="error")
+            return
+        self.call_from_thread(self.continue_fresh, s, text)
+
+    def continue_fresh(self, s: Session, text: str) -> None:
+        """Offer the brief as the first message of a new session where the old one ran."""
+        def done(message: str | None) -> None:
+            if message is not None:
+                self.begin(launch.new(s.cwd, prompt=message, name=f"{s.title} (continued)"), s.project,
+                           hidden=bool(message))
+        self.push_screen(FirstMessage(tilde(s.cwd), text), done)
 
     def action_fork(self) -> None:
         if s := self.selected():
