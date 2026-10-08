@@ -860,3 +860,43 @@ async def test_ctrl_bracket_opens_the_next_waiting_one(sessions, monkeypatch):
         app.query_one("#search").focus()  # works wherever focus is
         await pilot.press("ctrl+right_square_bracket")
         assert opened == ["b1"]
+
+
+async def test_crash_is_logged_with_its_traceback(sessions, monkeypatch):
+    app = CSM(sessions)
+
+    def boom():
+        raise ValueError("kaboom in an action")
+    monkeypatch.setattr(app, "action_stats", boom)
+    try:
+        async with app.run_test() as pilot:
+            await settle(pilot)
+            await pilot.press("I")
+            await pilot.pause()
+    except Exception:
+        pass
+    assert app.return_code == 1
+    log = app.crash_log.read_text()
+    assert "ValueError: kaboom in an action" in log and "Traceback" in log
+
+
+async def test_restarted_after_a_crash_says_so(sessions):
+    app = CSM(sessions, crashed=True)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        assert any("restarted after a crash" in str(n.message) for n in app._notifications)
+
+
+async def test_worker_crash_logs_the_workers_own_error(sessions, monkeypatch):
+    def bad(*a, **k):
+        raise RuntimeError("preview worker blew up")
+    monkeypatch.setattr(data, "transcript", bad)
+    app = CSM(sessions)
+    try:
+        async with app.run_test() as pilot:
+            await settle(pilot)
+            await pilot.press("down")
+            await settle(pilot)
+    except Exception:
+        pass
+    assert "RuntimeError: preview worker blew up" in app.crash_log.read_text()

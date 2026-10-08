@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -520,8 +521,9 @@ class CSM(App[Session | None]):
 
     def __init__(self, paths: data.Paths | None = None, focus_id: str | None = None,
                  host: tmux.Tmux | None = None, show_archived: bool = False, theme: str | None = None,
-                 notifications: bool = True):
+                 notifications: bool = True, crashed: bool = False):
         super().__init__()
+        self.crashed = crashed  # restarted after a crash: say so
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
         self.host = host  # set when running as the sidebar of a tmux window
@@ -590,6 +592,9 @@ class CSM(App[Session | None]):
                                            "warn.dim": f"dim {warn}"}))
         self.query_one("#search", Input).border_title = "filter"
         self.query_one(SessionList).focus()
+        if self.crashed:
+            self.notify(f"csm restarted after a crash; the details are in {tilde(str(self.crash_log))}",
+                        severity="warning", timeout=15)
         if self.host:
             self.poll_host()
         self.load()
@@ -643,6 +648,21 @@ class CSM(App[Session | None]):
         if state != self.git_state:
             self.git_state = state
             self.rebuild()
+
+    @property
+    def crash_log(self) -> Path:
+        return self.paths.state.parent / "crash.log"
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Every unhandled error, in the app or a worker, ends here: keep its traceback."""
+        try:
+            self.crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.crash_log, "a") as f:
+                f.write(f"\n--- {datetime.now():%Y-%m-%d %H:%M:%S} pid {os.getpid()}\n")
+                traceback.print_exception(getattr(error, "error", None) or error, file=f)  # a worker's own error
+        except OSError:
+            pass
+        super()._handle_exception(error)
 
     def poll_live(self) -> None:
         live = data.load_live(self.paths)
@@ -1872,8 +1892,21 @@ def main() -> None:
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
         host = tmux.Tmux(own=args.sidebar)
         host.mark_sidebar()
-        CSM(host=host, show_archived=args.archived, theme=args.theme, notifications=not args.no_notify).run()
-        return
+        # If the sidebar crashes, start it again: its pane closing would leave the sessions beside
+        # it without a list. A crash loop gives up after a few tries.
+        crashes: list[float] = []
+        while True:
+            app = CSM(host=host, show_archived=args.archived, theme=args.theme,
+                      notifications=not args.no_notify, crashed=bool(crashes))
+            app.run()
+            if not app.return_code:
+                return
+            crashes = [t for t in crashes if time.time() - t < 120] + [time.time()]
+            if len(crashes) > 5:
+                print(f"csm keeps crashing; see {tilde(str(app.crash_log))}. Press enter to close.")
+                input()
+                return
+            time.sleep(1)
     if not args.no_tmux and tmux.available():
         extra = (["--archived"] if args.archived else []) + (["--no-notify"] if args.no_notify else []) + (["--theme", args.theme] if args.theme else [])
         extra += ["--export-dir", os.environ["CSM_EXPORT_DIR"]] if args.export_dir else []
