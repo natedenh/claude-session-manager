@@ -121,7 +121,7 @@ def test_remove_refuses_dirty_worktree(paths, repo):
     wt = add(repo, "wip")
     (wt / "a.txt").write_text("x")
     [w] = worktrees.discover(paths, [sess(repo, wt)], {})
-    assert "WARNING" in worktrees.confirm_text(w)
+    assert "WARNING" in worktrees.confirm_text(w).plain
     ok, msg = worktrees.remove(w)
     assert not ok and msg
     assert (wt / "a.txt").exists()

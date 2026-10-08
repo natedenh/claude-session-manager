@@ -11,7 +11,6 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-from rich.markup import escape
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -156,23 +155,23 @@ def remove(wt: Worktree) -> tuple[bool, str]:
     return r.returncode == 0, msg
 
 
-def confirm_text(wt: Worktree) -> str:
-    where = f"[b]{escape(wt.project)}[/b] / [b]{escape(wt.name)}[/b]"
+def confirm_text(wt: Worktree) -> Text:
+    """Styled Text rather than markup: names and paths can hold brackets."""
+    where = Text.assemble((wt.project, "bold"), " / ", (wt.name, "bold"))
     if wt.missing:
-        return (f"Prune {where}?\nIts directory is gone; this runs `git worktree prune` for "
-                f"{escape(wt.project)}, dropping git's record of every missing worktree there.")
-    lines = [f"Remove worktree {where}?", f"[dim]{escape(wt.path)}[/]"]
+        return Text.assemble("Prune ", where, "?\nIts directory is gone; this runs `git worktree prune` for ",
+                             wt.project, ", dropping git's record of every missing worktree there.")
+    lines = [Text.assemble("Remove worktree ", where, "?"), Text(wt.path, style="dim")]
     if wt.branch:
-        lines.append(f"Branch [b]{escape(wt.branch)}[/b] is kept.")
+        lines.append(Text.assemble("Branch ", (wt.branch, "bold"), " is kept."))
     if wt.dirty is None or wt.unpushed is None:
-        lines.append("[b red]Couldn't read its git state; git will refuse if it has changes.[/]")
+        lines.append(Text("Couldn't read its git state; git will refuse if it has changes.", style="bold red"))
     if wt.dirty:
-        lines.append(f"[b red]WARNING: {wt.dirty} uncommitted change(s); git will refuse to remove it.[/]")
+        lines.append(Text(f"WARNING: {wt.dirty} uncommitted change(s); git will refuse to remove it.", style="bold red"))
     if wt.unpushed:
-        lines.append(f"[b red]WARNING: {wt.unpushed} commit(s) not pushed to any remote. "
-                     f"They stay on the branch.[/]")
-    return "\n".join(lines)
-
+        lines.append(Text(f"WARNING: {wt.unpushed} commit(s) not pushed to any remote. They stay on the branch.",
+                          style="bold red"))
+    return Text("\n").join(lines)
 
 def ago_days(ts: float, now: float) -> str:
     return "-" if not ts else "today" if now - ts < 86400 else f"{int((now - ts) // 86400)}d ago"

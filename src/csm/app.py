@@ -22,6 +22,7 @@ from textual import on, work
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
@@ -263,7 +264,7 @@ class Prompt(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(self.title_text)
+            yield Label(self.title_text, markup=False)  # titles and paths can hold brackets
             yield Input(value=self.value, select_on_focus=True)
 
     @on(Input.Submitted)
@@ -308,7 +309,7 @@ class DirPrompt(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(self.title_text)
+            yield Label(self.title_text, markup=False)
             yield Input(value=self.value, suggester=DirSuggester())
             yield Label("[dim]tab = complete    enter = start    esc = cancel[/]")
 
@@ -347,7 +348,8 @@ class FirstMessage(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(f"New session in {self.where}: first message ({'edit as you like' if self.text else 'optional'})")
+            yield Label(f"New session in {self.where}: first message ({'edit as you like' if self.text else 'optional'})",
+                        markup=False)
             yield self.Box(self.text, soft_wrap=True, show_line_numbers=False)
             yield Label("[dim]ctrl+s = start; with a message it runs hidden and you stay here\n"
                         "enter on an empty box = start it beside the list    esc = cancel[/]")
@@ -367,13 +369,13 @@ class Confirm(ModalScreen[bool]):
         Binding("escape", "answer(False)", show=False),
     ]
 
-    def __init__(self, message: str):
+    def __init__(self, message: str | Text):
         super().__init__()
         self.message = message
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(self.message)
+            yield Label(self.message, markup=False)
             yield Label("[dim]y / enter = yes    n / esc = no[/]")
 
     def action_answer(self, yes: bool) -> None:
@@ -392,11 +394,11 @@ class WhenIdle(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
-            yield Label(f"When “{self.title_text}” goes idle:")
+            yield Label(f"When “{self.title_text}” goes idle:", markup=False)
             yield Label("  n  notify me\n  a  archive it\n  r  retire it (stop and archive)"
                         + ("\n  s  send it a prompt" if self.can_send else ""))
             if self.queued:
-                yield Label(f"  c  cancel the queued “{self.queued}”")
+                yield Label(f"  c  cancel the queued “{self.queued}”", markup=False)
             yield Label("[dim]esc = close[/]")
 
     def action_pick(self, choice: str | None = None) -> None:
@@ -658,6 +660,15 @@ class CSM(App[Session | None]):
             self.git_state = state
             self.rebuild()
 
+    def closing(self) -> bool:
+        """True once the app is shutting down: its widgets go before timers, workers and queued
+        events stop, and anything that touches them then would crash on the way out."""
+        try:
+            self.query_one(SessionList)
+            return False
+        except NoMatches:
+            return True
+
     @property
     def crash_log(self) -> Path:
         return self.paths.state.parent / "crash.log"
@@ -718,6 +729,8 @@ class CSM(App[Session | None]):
         super()._handle_exception(error)
 
     def poll_live(self) -> None:
+        if self.closing():
+            return
         live = data.load_live(self.paths)
         changed = self.host is not None and self.poll_host()
         changed = self.state.reload() or changed  # archived, pinned, tags... edited elsewhere
@@ -936,6 +949,8 @@ class CSM(App[Session | None]):
 
     def pulse(self) -> None:
         """Redraw only the working sessions' rows, so the pulse doesn't rebuild the list."""
+        if self.closing():
+            return
         self.pulse_on = not self.pulse_on
         lst = self.query_one(SessionList)
         for sid, with_project in self.row_args.items():
@@ -943,6 +958,8 @@ class CSM(App[Session | None]):
                 lst.replace_option_prompt(f"s:{sid}", self.row(s, with_project))
 
     def rebuild(self) -> None:
+        if self.closing():
+            return
         self.wait_labels = self.labels()
         lst = self.query_one(SessionList)
         current = lst.highlighted_option.id if lst.highlighted_option else None
@@ -1049,7 +1066,8 @@ class CSM(App[Session | None]):
             parts.append(f"{len(self.marked)} marked")
         if self.hits is not None:
             parts.append(f"text “{self.search_query}”: {len(self.hits)} sessions")
-        self.query_one("#status", Static).update("  ·  ".join(parts) + "    [dim]? help[/]")
+        # Text, not markup: the parts carry what you typed into the filter.
+        self.query_one("#status", Static).update(Text.assemble("  ·  ".join(parts), ("    ? help", "dim")))
 
     def selected(self) -> Session | None:
         opt = self.query_one(SessionList).highlighted_option
@@ -1057,6 +1075,8 @@ class CSM(App[Session | None]):
 
     @on(OptionList.OptionHighlighted)
     def highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if self.closing():
+            return
         if event.option.id == "S:summary":
             self.show_summary()
         else:
@@ -1219,6 +1239,8 @@ class CSM(App[Session | None]):
             self.call_from_thread(self.show_messages, s, messages)
 
     def show_messages(self, s: Session, messages: list[Message]) -> None:
+        if self.closing():
+            return
         if (cur := self.selected()) is None or cur.id != s.id:
             return
         # Markdown normally; plain text while a transcript search is active, so matches can be highlighted.
@@ -1277,7 +1299,7 @@ class CSM(App[Session | None]):
                 self.rebuild()
             else:
                 self.search_query = q
-                self.query_one("#status", Static).update(f"searching transcripts for “{q}”…")
+                self.query_one("#status", Static).update(Text(f"searching transcripts for “{q}”…"))
                 self.run_search(q)
         self.query_one(SessionList).focus()
 
