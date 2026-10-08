@@ -662,6 +662,11 @@ class CSM(App[Session | None]):
     def crash_log(self) -> Path:
         return self.paths.state.parent / "crash.log"
 
+    def notify(self, message: str, *, markup: bool = False, **kw) -> None:
+        """Plain text unless asked: messages carry session titles and key names like `[`,
+        which Textual would otherwise parse as markup, and a bad tag crashes the toast."""
+        super().notify(message, markup=markup, **kw)
+
     async def run_action(self, action, default_namespace=None, namespaces=None) -> bool:
         if isinstance(action, str):
             self.note_action(action)
@@ -692,7 +697,7 @@ class CSM(App[Session | None]):
         today = sum(s.active.get(day.date().isoformat(), 0) for s in self.sessions)
         self.signals.recap_due = day.hour >= 17 and today >= 60 and self.usage.last("recap") != self.usage.day()
         if tip := tips.pick(self.usage, self.signals, time.time()):
-            self.notify(f"{tip.text}\n[dim]ctrl+t turns tips off[/]", timeout=12)
+            self.notify(f"{tip.text}\n(ctrl+t turns tips off)", timeout=12)
             tips.shown(tip, self.usage, self.signals, time.time())
 
     def action_toggle_tips(self) -> None:

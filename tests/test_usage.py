@@ -90,3 +90,20 @@ def test_every_feature_is_bound():
     src = open(appmod.__file__).read()
     bound = set(re.findall(r'Binding\("[^"]+", "(?:app\.)?([^"]+)"', src)) | {"open"}
     assert {f.action for f in FEATURES} <= bound
+
+
+
+async def test_toasts_are_plain_text_so_brackets_cant_crash_them(sessions):  # noqa: F811
+    """Toasts are parsed when drawn: the "] / [" in a tip once crashed the sidebar."""
+    from textual.content import Content
+    app = CSM(sessions)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await settle(pilot)
+        app.signals.long_scroll = True
+        app.offer_tip()
+        app.notify("Sent to “[/] weird [title]”")
+        await settle(pilot)
+        notes = list(app._notifications)
+        assert any("] / [" in n.message for n in notes) and not any(n.markup for n in notes)
+        for n in notes:
+            Content(n.message) if not n.markup else Content.from_markup(n.message)
