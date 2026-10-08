@@ -7,7 +7,8 @@ import pytest
 from conftest import assistant, rec, user
 
 from csm import data
-from csm.app import CSM, SessionList
+from csm.app import CSM
+from csm.widgets import SessionList
 
 
 @pytest.fixture
@@ -748,7 +749,7 @@ def test_complete_dir(tmp_path):
     for d in ("alpha", "alpine", "beta", ".hidden"):
         (tmp_path / d).mkdir()
     (tmp_path / "alps.txt").write_text("")
-    from csm.app import complete_dir
+    from csm.dialogs import complete_dir
     base = str(tmp_path) + "/"
     assert complete_dir(base + "al") == base + "alp"  # as far as alpha and alpine agree; files don't count
     assert complete_dir(base + "b") == base + "beta/"
@@ -830,7 +831,7 @@ async def test_new_with_a_message_starts_hidden_and_stays_in_the_list(sessions, 
 
 
 def test_sparkline_scales_and_marks_quiet_days():
-    from csm.app import sparkline
+    from csm.fmt import sparkline
     assert sparkline([0] * 7, 0).plain == ""
     assert sparkline([0, 1, 0, 50, 100, 0, 25], 100).plain == "   ▁ ▅█ ▃"
 

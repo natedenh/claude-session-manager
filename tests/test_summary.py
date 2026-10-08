@@ -76,7 +76,8 @@ def test_waiting_session_without_digest_uses_last_message(tmp_path):
 
 async def test_summary_row_preview_and_screen(paths, write, tmp_path):
     from conftest import rec, user
-    from csm.app import CSM, SessionList
+    from csm.app import CSM
+    from csm.widgets import SessionList
     repo = str(tmp_path / "repo")
     f = write(repo, "a1", user("hi", repo), rec(type="custom-title", customTitle="Alpha work"))
     os.utime(f, (time.time() - 3600,) * 2)

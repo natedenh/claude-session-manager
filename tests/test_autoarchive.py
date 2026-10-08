@@ -5,7 +5,8 @@ from test_app import ids, sessions, settle  # noqa: F401 (sessions is a fixture)
 from textual.widgets import Input, Switch
 
 from csm import autoarchive, data, prs
-from csm.app import AutoArchiveSettings, CSM
+from csm.app import CSM
+from csm.dialogs import AutoArchiveSettings
 from csm.data import LiveSession
 
 NOW = 100 * 86400

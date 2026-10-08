@@ -115,7 +115,8 @@ def test_send_fails_silently(monkeypatch):
 
 async def test_waiting_shows_how_long_and_redraws_as_it_grows(sessions, sent):
     import time
-    from csm.app import SessionList, waited
+    from csm.fmt import waited
+    from csm.widgets import SessionList
     assert waited(time.time() - 5) == "1m" and waited(time.time() - 25 * 60) == "25m"
     assert waited(time.time() - 3 * 3600) == "3h" and waited(time.time() - 2 * 86400) == "2d"
     set_status(sessions, "a1", "idle")
@@ -136,7 +137,7 @@ async def test_waiting_shows_how_long_and_redraws_as_it_grows(sessions, sent):
 
 async def test_tab_opens_the_longest_waiting_then_the_next(sessions, sent, monkeypatch):
     import time
-    from csm.app import SessionList
+    from csm.widgets import SessionList
     for i, sid in enumerate(("a1", "a2", "b1")):
         (sessions.live / f"{i}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": sid, "status": "idle"}))
     app = CSM(sessions)

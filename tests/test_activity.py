@@ -70,7 +70,7 @@ async def test_warn_color_is_readable_on_light_themes(sessions, monkeypatch):  #
 
 
 async def test_working_dots_pulse_and_idle_dots_dont(sessions):  # noqa: F811
-    from csm.app import SessionList
+    from csm.widgets import SessionList
     (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
     (sessions.live / "2.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "a2", "status": "idle"}))
     app = CSM(sessions)

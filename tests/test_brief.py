@@ -45,7 +45,8 @@ def test_new_can_be_named():
 async def test_B_offers_the_brief_to_edit_then_starts_a_named_session(sessions, monkeypatch):  # noqa: F811
     monkeypatch.setattr(brief, "write", lambda s: f"Carry on with {s.title}.")
     host = FakeHost()
-    from csm.app import CSM, FirstMessage
+    from csm.app import CSM
+    from csm.dialogs import FirstMessage
     app = CSM(sessions, host=host)
     async with app.run_test() as pilot:
         await settle(pilot)

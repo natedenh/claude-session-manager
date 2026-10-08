@@ -5,7 +5,8 @@ import pytest
 
 from csm import prs
 from csm.prs import fetch as real_fetch  # the autouse fixture stubs prs.fetch
-from csm.app import CSM, pr_style, pr_summary
+from csm.app import CSM
+from csm.fmt import pr_style, pr_summary
 from test_app import sessions, settle  # noqa: F401
 
 URL = "u"  # the PR url of session a2 in the sessions fixture

@@ -1,7 +1,8 @@
 from conftest import rec, user
 
 from csm import data
-from csm.app import CSM, context_flag, context_line, context_style
+from csm.app import CSM
+from csm.fmt import context_flag, context_line, context_style
 
 
 def turn(tokens, model="claude-opus-5", sidechain=False, inp=1, out=4):

@@ -121,7 +121,7 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
 
         # a worktree removal confirmation for names full of brackets
         from csm import worktrees
-        from csm.app import Confirm
+        from csm.dialogs import Confirm
         wt = worktrees.Worktree(repo="/r/[x]", path="/r/[x]/.claude/worktrees/[/]wip", branch="[red]b",
                                 missing=False, dirty=2, unpushed=1)
         app.push_screen(Confirm(worktrees.confirm_text(wt)))
