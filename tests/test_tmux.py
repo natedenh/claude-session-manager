@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import uuid
 import time
 
 import pytest
@@ -13,7 +14,8 @@ pytestmark = pytest.mark.skipif(not shutil.which("tmux"), reason="tmux not insta
 
 @pytest.fixture
 def server():
-    base = ["tmux", "-L", f"csm-test-{os.getpid()}", "-f", str(CONF)]
+    # A socket per test: on Linux the last test's kill-server may not have finished yet.
+    base = ["tmux", "-L", f"csm-test-{os.getpid()}-{uuid.uuid4().hex[:8]}", "-f", str(CONF)]
     subprocess.run([*base, "new-session", "-d", "-s", "csm", "-x", "200", "-y", "50", "sleep 600"], check=True)
     me = subprocess.run([*base, "list-panes", "-F", "#{pane_id}"], capture_output=True, text=True).stdout.strip()
     t = Tmux(base, me=me)
