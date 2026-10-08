@@ -22,11 +22,17 @@ from . import autoarchive
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 6  # bump whenever parse_session changes
+CACHE_VERSION = 7  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
 TIMESTAMP_RE = re.compile(r'"timestamp":"([^"]+)"')
+MSG_ID_RE = re.compile(r'"message":\{[^{]*?"id":"([^"]+)"')
+USAGE_RE = {k: re.compile(rf'"{k}":(\d+)') for k in
+            ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")}
+# Relative price of each kind of token; the same on every current Claude model.
+TOKEN_WEIGHT = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25, "cache_read_input_tokens": 0.1,
+                "output_tokens": 5.0}
 UUID_RE = re.compile(r'"uuid":"([^"]+)"')
 SESSION_ID_RE = re.compile(r'"sessionId":"([^"]+)"')
 
@@ -80,6 +86,9 @@ class Session:
     active: dict[str, int] = field(default_factory=dict)  # "2026-10-07": minutes
     hours: list[int] = field(default_factory=lambda: [0] * 24)
     day_cost: dict[str, float] = field(default_factory=dict)
+    # Token weight since the last cost record, per day: not priced yet (see stats.rate).
+    day_unpriced: dict[str, float] = field(default_factory=dict)
+    priced_weight: float = 0.0  # token weight the recorded cost covers, to learn $ per weight
     day_lines: dict[str, int] = field(default_factory=dict)
     skills: dict[str, int] = field(default_factory=dict)
 
@@ -164,6 +173,13 @@ def _local(minute: str, memo: dict[str, tuple[str, int]]) -> tuple[str, int] | N
     return memo[minute]
 
 
+def _by_day(pending: dict[str, tuple[str, float]]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for d, w in pending.values():
+        out[d] = out.get(d, 0.0) + w
+    return out
+
+
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
     first_uuid = copied_from = last_usage = None
@@ -175,6 +191,8 @@ def parse_session(path: Path) -> Session | None:
     day_cost: dict[str, float] = {}
     day_lines: dict[str, int] = {}
     skills: Counter = Counter()
+    pending: dict[str, tuple[str, float]] = {}  # message id -> (day, token weight), since the last cost record
+    priced_weight = 0.0
     st = path.stat()
     try:
         with open(path, errors="replace") as f:
@@ -185,6 +203,11 @@ def parse_session(path: Path) -> Session | None:
                         started = last_ts
                     if '"isSidechain":true' not in line:
                         minutes.add(last_ts[:16])
+                if '"usage"' in line and '"type":"assistant"' in line and last_ts and (m := MSG_ID_RE.search(line)):
+                    # Each content block repeats its message's usage: count a message once.
+                    weight = sum(w * int(u.group(1)) for k, w in TOKEN_WEIGHT.items() if (u := USAGE_RE[k].search(line)))
+                    if (lt := _local(last_ts[:16], memo)) and weight:
+                        pending[m.group(1)] = (lt[0], weight)
                 if '"name":"Skill"' in line and '"type":"assistant"' in line:
                     try:
                         for c in json.loads(line).get("message", {}).get("content") or []:
@@ -233,9 +256,17 @@ def parse_session(path: Path) -> Session | None:
                         # Only growth counts: a total that drops is a new process (or two writing in
                         # turns), and whatever it adds from there shows up as growth again.
                         grew, added = max(0.0, now_cost - prev_cost), max(0, now_lines - prev_lines)
-                        if (lt := _local(last_ts[:16], memo)) and (grew or added):
+                        weight = sum(w for _, w in pending.values())
+                        if grew and weight:  # spread over the messages it paid for, by their tokens
+                            for d, w in pending.values():
+                                day_cost[d] = day_cost.get(d, 0.0) + grew * w / weight
+                            priced_weight += weight
+                        elif grew and (lt := _local(last_ts[:16], memo)):
                             day_cost[lt[0]] = day_cost.get(lt[0], 0.0) + grew
+                        if added and (lt := _local(last_ts[:16], memo)):
                             day_lines[lt[0]] = day_lines.get(lt[0], 0) + added
+                        if grew:
+                            pending = {}
                         prev_cost, prev_lines = now_cost, now_lines
                 elif t == "user" and first_prompt is None and not d.get("isMeta"):
                     text = message_text(d.get("message", {}).get("content"))
@@ -276,6 +307,7 @@ def parse_session(path: Path) -> Session | None:
         context_tokens=context_tokens, context_model=context_model,
         born=getattr(st, "st_birthtime", st.st_ctime),
         active=active, hours=hours, day_cost={k: round(v, 4) for k, v in day_cost.items()},
+        day_unpriced=_by_day(pending), priced_weight=priced_weight,
         day_lines=day_lines, skills=dict(skills),
     )
 

@@ -34,15 +34,29 @@ class Day:
     sessions: set[str] = field(default_factory=set)
 
 
-def daily(sessions: Iterable[Session]) -> dict[date, Day]:
+def rate(sessions: Iterable[Session]) -> float:
+    """Dollars per unit of token weight, learned from the cost Claude Code recorded: your own
+    prices, whatever provider bills them. Prices activity since a session's last cost record."""
+    sessions = list(sessions)
+    weight = sum(s.priced_weight for s in sessions)
+    return sum(sum(s.day_cost.values()) for s in sessions if s.priced_weight) / weight if weight else 0.0
+
+
+def spend(s: Session, day: str, per_weight: float) -> float:
+    return s.day_cost.get(day, 0.0) + s.day_unpriced.get(day, 0.0) * per_weight
+
+
+def daily(sessions: Iterable[Session], per_weight: float | None = None) -> dict[date, Day]:
+    sessions = list(sessions)
+    per_weight = rate(sessions) if per_weight is None else per_weight
     out: dict[date, Day] = {}
     for s in sessions:
         for d, m in s.active.items():
             day = out.setdefault(date.fromisoformat(d), Day())
             day.minutes += m
             day.sessions.add(s.id)
-        for d, c in s.day_cost.items():
-            out.setdefault(date.fromisoformat(d), Day()).cost += c
+        for d in s.day_cost.keys() | s.day_unpriced.keys():
+            out.setdefault(date.fromisoformat(d), Day()).cost += spend(s, d, per_weight)
         for d, n in s.day_lines.items():
             out.setdefault(date.fromisoformat(d), Day()).lines += n
     return out
@@ -90,7 +104,8 @@ def totals(days: dict[date, Day], start: date, end: date) -> Day:
 
 def render(sessions: list[Session], today: date | None = None) -> Group:
     today = today or date.today()
-    days = daily(sessions)
+    per_weight = rate(sessions)
+    days = daily(sessions, per_weight)
     if not days:
         return Group(Text("No history yet: sessions record it as they're read.", style="dim italic"))
     monday = today - timedelta(days=today.weekday())
@@ -134,7 +149,8 @@ def render(sessions: list[Session], today: date | None = None) -> Group:
     projects: dict[str, list] = {}
     for s in sessions:
         m = sum(v for d, v in s.active.items() if date.fromisoformat(d) >= monday)
-        c = sum(v for d, v in s.day_cost.items() if date.fromisoformat(d) >= monday)
+        c = sum(spend(s, d, per_weight) for d in s.day_cost.keys() | s.day_unpriced.keys()
+                if date.fromisoformat(d) >= monday)
         if m or c:
             row = projects.setdefault(s.project, [s.project_name, 0, 0.0])
             row[1] += m
@@ -163,7 +179,8 @@ def render(sessions: list[Session], today: date | None = None) -> Group:
            heading("When you work"), Text("Active minutes by hour of the day, all time.", style="dim"), clock,
            heading("Most-used skills"), sk if skills else Text("No skills used yet.", style="dim")]
     out.append(Text("\nClaude time adds up each session's active minutes, so sessions running side by side "
-                    "count separately.", style="dim"))
+                    "count separately. Cost is what Claude Code recorded, spread over the days by tokens; "
+                    "for work since a session's last record, it's estimated at your average price.", style="dim"))
     return Group(*out)
 
 

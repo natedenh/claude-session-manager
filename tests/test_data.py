@@ -261,3 +261,23 @@ def test_history_by_local_day_hour_cost_lines_and_skills(paths, write, monkeypat
     assert s.day_cost == {"2026-09-30": 1.5, "2026-10-01": 0.25}
     assert s.day_lines == {"2026-09-30": 10, "2026-10-01": 2}
     assert s.skills == {"browser-test": 2}
+
+
+def test_recorded_cost_is_spread_over_the_messages_it_paid_for(paths, write, tmp_path):
+    cwd = str(tmp_path)
+
+    def msg(mid, ts, out):  # two lines for one message, as Claude Code writes a block per line
+        line = rec(type="assistant", timestamp=ts, message={"id": mid, "content": [],
+                   "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0,
+                             "cache_read_input_tokens": 0, "output_tokens": out}})
+        return [line, line]
+    f = write(cwd, "c1", user("hi", cwd),
+              *msg("m1", "2026-09-29T15:00:00Z", 100),  # output counts 5x: 500 weight on the 29th
+              *msg("m2", "2026-09-30T15:00:00Z", 300),  # 1500 on the 30th
+              rec(type="cost-state", totalCostUSD=4.0),
+              *msg("m3", "2026-10-01T15:00:00Z", 200))  # after the last record: not priced yet
+    s = data.parse_session(f)
+    assert s.day_cost == {"2026-09-29": 1.0, "2026-09-30": 3.0}  # 500 : 1500 weight
+    assert s.priced_weight == 2000.0 and s.day_unpriced == {"2026-10-01": 1000.0}
+    from csm import stats
+    assert stats.rate([s]) == 4.0 / 2000 and stats.spend(s, "2026-10-01", stats.rate([s])) == 2.0

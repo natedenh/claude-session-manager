@@ -61,6 +61,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `t` | read the whole transcript; `/` searches, `n` / `N` step through matches, `g` / `G` top / bottom, `esc` closes search then the viewer |
 | `L` | what the session loaded: plugins (with their skills, agents and MCP servers), other skills with ✓ and a count for each one used, MCP servers (failed ones in red), agents, hooks that reported output, CLAUDE.md files |
 | `W` | clean up worktrees (see below) |
+| `J` | write today's recap, `<date> Claude recap.md`, and open it. It has the day's Claude time, cost, lines added and streak; what still needs you; then each project and session with its time, cost, PR and branch, plus what it finished and decided, from the Summary page's digests (refreshed first; without one, a session shows the end of its last message). It goes to `CSM_RECAP_DIR` if set, such as a folder in your Obsidian vault, else the export folder. Pressing it again later replaces that day's file |
 | `I` | stats: Claude time, sessions, cost and lines added for today, this week and last week; your streak of active days; the last 14 days as bars; busiest projects this week; cost by week; active minutes by hour of the day; most-used skills. Claude time adds up each session's active minutes (minutes it wrote anything), so sessions side by side count separately |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |

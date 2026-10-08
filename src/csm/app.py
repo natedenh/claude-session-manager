@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -26,7 +27,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, Switch, Te
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, summary, tmux, worktrees
+from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .costs import Costs
 from .stats import Stats
@@ -101,6 +102,7 @@ HELP = """\
   L         what the session loaded: plugins, skills (✓ used), MCP servers, agents, hooks, CLAUDE.md files
   *         pin / unpin                   space     mark; x and d act on all marked
   $         costs                         W         clean up worktrees
+  J         write today's recap to Markdown and open it: time, cost, PRs, what each session did
   I         stats: Claude time per day, streak, busiest projects, cost by week, hours, top skills
   ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars, knight rider
   ctrl+r    reload
@@ -505,6 +507,7 @@ class CSM(App[Session | None]):
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("I", "stats", "Stats", show=False),
+        Binding("J", "recap", "Recap", show=False),
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("S", "summary", "Summary", show=False),
         Binding("tilde", "next_wave", "Wave style", show=False),
@@ -1257,6 +1260,30 @@ class CSM(App[Session | None]):
 
     def action_stats(self) -> None:
         self.push_screen(Stats(self.sessions))
+
+    def action_recap(self) -> None:
+        self.notify("Writing today's recap (summarizing what changed first)…", timeout=3)
+        self.run_recap()
+
+    @work(thread=True, exclusive=True, group="recap")
+    def run_recap(self) -> None:
+        day = datetime.now().date()
+        hidden = {s.id for s in self.sessions if self.archived_by(s)}
+        shown = [s for s in self.sessions if s.id not in hidden]
+        digests = summary.refresh(self.paths, [s for s in shown if s.active.get(day.isoformat())], dict(self.live))
+        pr = lambda s: pr_summary(st) if (st := self.pr_status.get(s.pr_url or "")) else ""
+        text = recap.render(shown, day, digests, self.last_said, pr, set(self.waiting) | set(self.permission))
+        where = Path(os.environ.get("CSM_RECAP_DIR") or self.paths.export)
+        try:
+            path = recap.write(text, day, where.expanduser())
+        except OSError as e:
+            self.call_from_thread(self.notify, f"Recap failed: {e}", severity="error")
+            return
+        note = f"Recap written to {tilde(str(path))}"
+        if digests.error:
+            note += " (summaries unavailable, so it uses each session's last message)"
+        self.call_from_thread(self.notify, note, timeout=5)
+        subprocess.run(["open", str(path)], check=False)
 
     def action_loadout(self) -> None:
         if (s := self.selected()) is not None:
