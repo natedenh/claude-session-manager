@@ -66,7 +66,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
     # Beside a session in tmux the list is all that fits; full width gets the preview back.
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
     CSS = """
-    #search { margin: 0 1 1 1; border-title-color: $accent; }  /* a blank line before the list */
+    #search { margin: 1 1; border-title-color: $accent; }  /* a blank line above, and before the list */
     #body { height: 1fr; }
     #list { width: 38%; min-width: 34; max-width: 72; border: none; padding: 0; }
     #list { text-wrap: nowrap; text-overflow: ellipsis; }
