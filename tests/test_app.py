@@ -4,6 +4,7 @@ import signal
 import subprocess
 
 import pytest
+from textual.worker import WorkerCancelled
 from conftest import assistant, rec, user
 
 from csm import data
@@ -29,7 +30,14 @@ def ids(app):
 
 
 async def settle(pilot):
-    await pilot.app.workers.wait_for_complete()
+    # Exclusive workers (the preview, git state) cancel the one before when a new one starts;
+    # that's expected, so wait for whatever is still running rather than fail on it.
+    for _ in range(20):
+        try:
+            await pilot.app.workers.wait_for_complete()
+            break
+        except WorkerCancelled:
+            continue
     await pilot.pause()
 
 
@@ -144,7 +152,7 @@ async def test_live_session_asks_before_resuming(sessions):
 
 async def test_open_in_ghostty_scripts_running_app(sessions, monkeypatch):
     calls = []
-    monkeypatch.setattr("csm.app.subprocess.run",
+    monkeypatch.setattr("subprocess.run",
                         lambda argv, **kw: calls.append((argv, kw)) or subprocess.CompletedProcess(argv, 0, "", ""))
     monkeypatch.setattr("csm.launch.shutil.which", lambda _: "/bin/claude")
     app = CSM(sessions)
@@ -619,7 +627,7 @@ async def test_retire_only_archives_sessions_running_outside_csm(sessions, monke
 
 async def test_when_idle_waits_for_busy_session_then_acts(sessions, monkeypatch):
     notes = []
-    monkeypatch.setattr("csm.app.notify.send", notes.append)
+    monkeypatch.setattr("csm.notify.send", notes.append)
     live = sessions.live / "1.json"
     live.write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "busy"}))
     app = CSM(sessions)
@@ -685,7 +693,7 @@ async def test_rows_open_beside_the_list_get_a_soft_background(sessions):
 
 
 async def test_project_header_shows_uncommitted_and_unpushed(sessions, monkeypatch):
-    monkeypatch.setattr("csm.app.worktrees.repo_state", lambda p: (3, 2, 0) if p.endswith("beta") else None)
+    monkeypatch.setattr("csm.worktrees.repo_state", lambda p: (3, 2, 0) if p.endswith("beta") else None)
     for d in ("alpha", "beta"):
         (sessions.projects.parent / d).mkdir(exist_ok=True)
     app = CSM(sessions)
