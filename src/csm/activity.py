@@ -46,8 +46,9 @@ def equalizer(width: int, phase: float, amp: float = 1.0, energy: float = 1.0) -
     """Bars bouncing like a music visualizer: busier sessions, livelier bars."""
     out = []
     for x in range(width):
-        h = (0.5 + 0.5 * math.sin(x * 0.9 + phase * 1.7)) * (0.55 + 0.45 * math.sin(x * 0.13 - phase * 0.6 * energy))
-        h += 0.25 * (0.5 + 0.5 * math.sin(x * 2.3 + phase * 3.1))  # flicker
+        # Slow, and smooth from bar to bar, so neighbours rise and fall together rather than jitter.
+        h = (0.5 + 0.5 * math.sin(x * 0.45 + phase * 0.75)) * (0.55 + 0.45 * math.sin(x * 0.11 - phase * 0.3 * energy))
+        h += 0.12 * (0.5 + 0.5 * math.sin(x * 1.1 + phase * 1.2))  # a little life
         out.append(BARS[min(len(BARS) - 1, max(1, round(h * amp * (len(BARS) - 1))))])
     return "".join(out)
 
