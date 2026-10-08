@@ -17,6 +17,7 @@ from textual.widgets import Footer, Static
 
 from .costs import heading, money, table
 from .data import Session
+from .usage import FEATURES, LEARNING_DAYS, Usage
 
 DAYS = 14
 WEEKS = 8
@@ -102,7 +103,38 @@ def totals(days: dict[date, Day], start: date, end: date) -> Day:
     return out
 
 
-def render(sessions: list[Session], today: date | None = None) -> Group:
+def yours(usage: Usage, today: date) -> list:
+    """How you use csm: favourites, features never tried, ones you've drifted from."""
+    out: list = [heading("Your csm")]
+    top = sorted(((usage.since_days(f.action, 7), f) for f in FEATURES), key=lambda x: -x[0])
+    if used := [(n, f) for n, f in top if n][:8]:
+        t = table(("Most used, last 7 days", "left"), ("Keys", "left"), ("Times", "right"))
+        for n, f in used:
+            t.add_row(f.what, f.keys, str(n))
+        out.append(t)
+    if usage.history_days < LEARNING_DAYS:
+        days = usage.history_days
+        out.append(Text(f"Still learning how you use csm ({days} day{'s' * (days != 1)} so far); "
+                        "suggestions show up after a few days.", style="dim"))
+        return out
+    never = [f for f in FEATURES if not usage.total(f.action) and f.action != "open"]
+    if never:
+        t = table(("Not tried yet", "left"), ("Keys", "left"))
+        for f in never[:12]:
+            t.add_row(f.what, Text(f.keys, style="bold"))
+        out.append(t)
+        if len(never) > 12:
+            out.append(Text(f"and {len(never) - 12} more; ? lists every key.", style="dim"))
+    stale = (today - timedelta(days=14)).isoformat()
+    if drifted := [f for f in FEATURES if (last := usage.last(f.action)) and last < stale]:
+        t = table(("Not lately", "left"), ("Keys", "left"), ("Last used", "right"))
+        for f in drifted:
+            t.add_row(f.what, f.keys, usage.last(f.action))
+        out.append(t)
+    return out
+
+
+def render(sessions: list[Session], today: date | None = None, usage: Usage | None = None) -> Group:
     today = today or date.today()
     per_weight = rate(sessions)
     days = daily(sessions, per_weight)
@@ -178,6 +210,8 @@ def render(sessions: list[Session], today: date | None = None) -> Group:
            heading("Cost by week"), weekly,
            heading("When you work"), Text("Active minutes by hour of the day, all time.", style="dim"), clock,
            heading("Most-used skills"), sk if skills else Text("No skills used yet.", style="dim")]
+    if usage is not None:
+        out += yours(usage, today)
     out.append(Text("\nClaude time adds up each session's active minutes, so sessions running side by side "
                     "count separately. Cost is what Claude Code recorded, spread over the days by tokens; "
                     "for work since a session's last record, it's estimated at your average price.", style="dim"))
@@ -194,13 +228,13 @@ class Stats(Screen[None]):
     Stats #body { padding: 1 2; }
     """
 
-    def __init__(self, sessions: list[Session]):
+    def __init__(self, sessions: list[Session], usage: Usage | None = None):
         super().__init__()
-        self.sessions = sessions
+        self.sessions, self.usage = sessions, usage
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
-            yield Static(render(self.sessions))
+            yield Static(render(self.sessions, usage=self.usage))
         yield Footer()
 
     def on_mount(self) -> None:

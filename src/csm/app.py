@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme as RichTheme
 from textual import on, work
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -28,7 +29,7 @@ from textual.widgets import Footer, Input, Label, OptionList, Static, Switch, Te
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, brief, tmux, worktrees
+from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, brief, tips, usage, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .costs import Costs
 from .stats import Stats
@@ -108,6 +109,7 @@ HELP = """\
   J         write today's recap to Markdown and open it: time, cost, PRs, what each session did
   I         stats: Claude time per day, streak, busiest projects, cost by week, hours, top skills
   ~         change the activity strip's style (or click it): wave, strands, equalizer, heartbeat, stars, knight rider
+  ctrl+t    tips on / off: suggestions for features you aren't using, when they'd help
   ctrl+r    reload
   q         quit (in tmux: detach; sessions keep running)
 
@@ -515,6 +517,7 @@ class CSM(App[Session | None]):
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("S", "summary", "Summary", show=False),
         Binding("tilde", "next_wave", "Wave style", show=False),
+        Binding("ctrl+t", "toggle_tips", "Tips on/off", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -524,6 +527,12 @@ class CSM(App[Session | None]):
                  notifications: bool = True, crashed: bool = False):
         super().__init__()
         self.crashed = crashed  # restarted after a crash: say so
+        self.usage = usage.Usage((paths or data.Paths()).state.parent / "usage.json")
+        self.signals = tips.Signals()
+        self.moves = 0  # cursor moves since the last session opened
+        self.last_action: tuple[str, float] = ("", 0.0)
+        self.archived_at: list[float] = []
+        self.via_tab = False
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
         self.host = host  # set when running as the sidebar of a tmux window
@@ -653,6 +662,45 @@ class CSM(App[Session | None]):
     def crash_log(self) -> Path:
         return self.paths.state.parent / "crash.log"
 
+    async def run_action(self, action, default_namespace=None, namespaces=None) -> bool:
+        if isinstance(action, str):
+            self.note_action(action)
+        return await super().run_action(action, default_namespace, namespaces)
+
+    def note_action(self, action: str) -> None:
+        """Count features used, and notice habits a tip could help with."""
+        name, now = action.removeprefix("app."), time.time()
+        if name in ("cursor_down", "cursor_up", "page_down", "page_up"):
+            self.moves += 1
+            return
+        feature = self.usage.record(action)
+        if feature == "next_waiting" and self.last_action[0] == "back" and now - self.last_action[1] < 5:
+            self.signals.focus_then_tab += 1
+        if feature == "archive" and not self.marked:
+            self.archived_at = [t for t in self.archived_at if now - t < 120] + [now]
+            self.signals.archives_one_by_one = len(self.archived_at)
+        self.last_action = (feature or name, now)
+
+    def on_app_focus(self, event: events.AppFocus) -> None:
+        self.last_action = ("back", time.time())  # back in the list from a session pane
+
+    def on_unmount(self) -> None:
+        self.usage.save(force=True)
+
+    def offer_tip(self) -> None:
+        day = datetime.now()
+        today = sum(s.active.get(day.date().isoformat(), 0) for s in self.sessions)
+        self.signals.recap_due = day.hour >= 17 and today >= 60 and self.usage.last("recap") != self.usage.day()
+        if tip := tips.pick(self.usage, self.signals, time.time()):
+            self.notify(f"{tip.text}\n[dim]ctrl+t turns tips off[/]", timeout=12)
+            tips.shown(tip, self.usage, self.signals, time.time())
+
+    def action_toggle_tips(self) -> None:
+        self.usage.muted = not self.usage.muted
+        self.usage.dirty = True
+        self.usage.save(force=True)
+        self.notify("Tips off; ctrl+t turns them back on" if self.usage.muted else "Tips on", timeout=3)
+
     def _handle_exception(self, error: Exception) -> None:
         """Every unhandled error, in the app or a worker, ends here: keep its traceback."""
         try:
@@ -675,6 +723,8 @@ class CSM(App[Session | None]):
         self.track(live)
         self.track_stuck(live)
         changed = self.run_when_idle(live) or changed
+        self.offer_tip()
+        self.usage.save()
         if (changed or (set(self.waiting), self.permission, set(self.stuck)) != before or self.labels() != self.wait_labels
                 or {k: v.status for k, v in live.items()} != {k: v.status for k, v in self.live.items()}
                 or data.viewers(live) != self.viewers):
@@ -1282,7 +1332,7 @@ class CSM(App[Session | None]):
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
 
     def action_stats(self) -> None:
-        self.push_screen(Stats(self.sessions))
+        self.push_screen(Stats(self.sessions, self.usage))
 
     def action_recap(self) -> None:
         self.notify("Writing today's recap (summarizing what changed first)…", timeout=3)
@@ -1325,6 +1375,15 @@ class CSM(App[Session | None]):
     # ---- actions on a session --------------------------------------------
 
     def resume(self, s: Session) -> None:
+        if not self.via_tab:
+            self.usage.record("open")
+            if s.id in self.waiting or s.id in self.permission:
+                self.signals.waiting_opened_by_hand += 1
+        self.via_tab = False
+        if (frac := context_fraction(s)) and frac > 0.8:
+            self.signals.opened_full_context = True
+        self.signals.long_scroll = self.signals.long_scroll or self.moves >= 20
+        self.moves = 0
         if s.id in self.waiting or s.id in self.permission:
             self.clear_attention(s.id)
             self.rebuild()
@@ -1499,6 +1558,7 @@ class CSM(App[Session | None]):
             self.trail = [*self.trail, s.id][-20:]
         self.expanded.add(s.project)  # it may sit past the first few rows of its project
         self.focus_id = s.id
+        self.via_tab = True
         self.resume(s)
         self.rebuild()
 
