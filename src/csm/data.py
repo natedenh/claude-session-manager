@@ -7,7 +7,9 @@ Our own state (archived sessions, collapsed projects) and a parse cache live out
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import tempfile
 from collections import Counter
 from datetime import datetime
 import os
@@ -656,7 +658,15 @@ def normalize_tags(raw: str | list[str]) -> list[str]:
 
 
 def _write_json(path: Path, obj) -> None:
+    """Write atomically. The temp file is unique, so two writers (threads, or two csm
+    processes) can't rename each other's away; the last one to finish wins."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(obj))
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(obj))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise

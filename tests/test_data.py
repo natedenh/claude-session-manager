@@ -281,3 +281,23 @@ def test_recorded_cost_is_spread_over_the_messages_it_paid_for(paths, write, tmp
     assert s.priced_weight == 2000.0 and s.day_unpriced == {"2026-10-01": 1000.0}
     from csm import stats
     assert stats.rate([s]) == 4.0 / 2000 and stats.spend(s, "2026-10-01", stats.rate([s])) == 2.0
+
+
+def test_concurrent_json_writes_dont_collide(tmp_path):
+    import threading
+    target = tmp_path / "prs.json"
+    errors = []
+
+    def writer(n):
+        try:
+            for i in range(200):
+                data._write_json(target, {"writer": n, "i": i})
+        except Exception as e:  # the old fixed prs.tmp name raised FileNotFoundError here
+            errors.append(e)
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and json.loads(target.read_text())["i"] == 199
+    assert [p.name for p in tmp_path.iterdir()] == ["prs.json"]  # no temp files left behind

@@ -104,6 +104,9 @@ def refresh(paths: Paths, pr_urls: list[str]) -> bool:
             continue
         if (new := fetch(url)) is not None:
             statuses[url] = new
-            _write_json(paths.prs, {u: asdict(s) for u, s in statuses.items()})
+            try:
+                _write_json(paths.prs, {u: asdict(s) for u, s in statuses.items()})
+            except OSError:
+                pass  # only a cache: the next refresh writes it again
             changed = True
     return changed
