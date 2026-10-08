@@ -19,7 +19,6 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme as RichTheme
 from textual import on, work
-from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
@@ -28,16 +27,18 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, ghostty, hooks, launch, links, notify, prs, recap, summary, brief, tips, usage, tmux, worktrees
+from . import autoarchive, data, desktop, export, hooks, links, prs, recap, summary, tips, usage, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
+from .attention import AttentionMixin
 from .costs import Costs
-from .dialogs import AutoArchiveSettings, Confirm, DirPrompt, FirstMessage, Help, Prompt, WhenIdle
-from .fmt import (ago, context_flag, context_fraction, context_line, git_flags, last_days, pr_style, pr_summary,
+from .hosting import HostingMixin
+from .dialogs import AutoArchiveSettings, Confirm, Help, Prompt
+from .fmt import (ago, context_flag, context_line, git_flags, last_days, pr_style, pr_summary,
                   sparkline, tilde, waited)
 from .widgets import SessionList
 from .stats import Stats
 from .data import LiveSession, Message, Session, normalize_tags
-from .launch import Launch, Pending
+from .launch import Pending
 from .viewer import Viewer
 from .loadout import LoadoutView
 from .worktrees import Worktrees
@@ -60,7 +61,7 @@ def default_theme() -> str:
     r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
     return "ansi-dark" if r.stdout.strip() == "Dark" else "ansi-light"
 
-class CSM(App[Session | None]):
+class CSM(AttentionMixin, HostingMixin, App[Session | None]):
     TITLE = "Claude sessions"
     # Beside a session in tmux the list is all that fits; full width gets the preview back.
     HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (100, "-wide")]
@@ -297,39 +298,8 @@ class CSM(App[Session | None]):
             self.note_action(action)
         return await super().run_action(action, default_namespace, namespaces)
 
-    def note_action(self, action: str) -> None:
-        """Count features used, and notice habits a tip could help with."""
-        name, now = action.removeprefix("app."), time.time()
-        if name in ("cursor_down", "cursor_up", "page_down", "page_up"):
-            self.moves += 1
-            return
-        feature = self.usage.record(action)
-        if feature == "next_waiting" and self.last_action[0] == "back" and now - self.last_action[1] < 5:
-            self.signals.focus_then_tab += 1
-        if feature == "archive" and not self.marked:
-            self.archived_at = [t for t in self.archived_at if now - t < 120] + [now]
-            self.signals.archives_one_by_one = len(self.archived_at)
-        self.last_action = (feature or name, now)
-
-    def on_app_focus(self, event: events.AppFocus) -> None:
-        self.last_action = ("back", time.time())  # back in the list from a session pane
-
     def on_unmount(self) -> None:
         self.usage.save(force=True)
-
-    def offer_tip(self) -> None:
-        day = datetime.now()
-        today = sum(s.active.get(day.date().isoformat(), 0) for s in self.sessions)
-        self.signals.recap_due = day.hour >= 17 and today >= 60 and self.usage.last("recap") != self.usage.day()
-        if tip := tips.pick(self.usage, self.signals, time.time()):
-            self.notify(f"{tip.text}\n(ctrl+t turns tips off)", timeout=12)
-            tips.shown(tip, self.usage, self.signals, time.time())
-
-    def action_toggle_tips(self) -> None:
-        self.usage.muted = not self.usage.muted
-        self.usage.dirty = True
-        self.usage.save(force=True)
-        self.notify("Tips off; ctrl+t turns them back on" if self.usage.muted else "Tips on", timeout=3)
 
     def _handle_exception(self, error: Exception) -> None:
         """Every unhandled error, in the app or a worker, ends here: keep its traceback."""
@@ -362,82 +332,6 @@ class CSM(App[Session | None]):
                 or data.viewers(live) != self.viewers):
             self.live = live
             self.rebuild()
-
-    def track(self, live: dict[str, LiveSession]) -> None:
-        """Mark sessions that went from working to idle as waiting. The first call has no history."""
-        prev, self.last_status = self.last_status, {k: v.status for k, v in live.items()}
-        keep = {k for k, v in live.items() if v.status == "idle"} | self.hook_waiting
-        self.waiting = {k: t for k, t in self.waiting.items() if k in keep}
-        for sid, now in self.last_status.items():
-            if prev is None or now != "idle" or prev.get(sid, "idle") == "idle" or sid in self.waiting:
-                continue
-            self.waiting[sid] = time.time()
-            if self.notifications and sid != self.shown_id:
-                title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
-                self.send_notification(f"{title} is waiting")
-
-    def track_hooks(self, live: dict[str, LiveSession]) -> None:
-        """Apply states written by `csm hook`. Opening a session ignores its file until a newer one."""
-        self.permission, self.permission_at, self.hook_waiting = {}, {}, set()
-        for sid, h in hooks.load_status(self.paths.status).items():
-            if sid not in live or h["at"] <= self.hook_seen.get(sid, 0) or h["state"] == "working":
-                continue
-            perm = h["state"] == "permission"
-            if perm:
-                self.permission[sid] = h.get("message") or "permission"
-                self.permission_at[sid] = h["at"]
-            else:
-                self.hook_waiting.add(sid)
-                self.waiting[sid] = h["at"]  # when it stopped, even if csm wasn't running then
-            if self.notifications and sid != self.shown_id and self.hook_notified.get(sid, 0) < h["at"]:
-                title = next((x.title for x in self.sessions if x.id == sid), None) or live[sid].name or sid[:8]
-                self.send_notification(f"{title} needs permission" if perm else f"{title} is waiting")
-            self.hook_notified[sid] = h["at"]
-
-    def track_stuck(self, live: dict[str, LiveSession]) -> None:
-        """Busy sessions whose transcript hasn't changed for a while. Long builds look like this too."""
-        if self.stuck_minutes <= 0:
-            return
-        paths = {s.id: s for s in self.sessions}
-        stuck = {}
-        for sid, l in live.items():
-            if l.status == "idle" or sid in self.permission or not (s := paths.get(sid)):
-                continue
-            try:
-                last = os.stat(s.path).st_mtime
-            except OSError:
-                continue
-            if time.time() - last >= self.stuck_minutes * 60:
-                stuck[sid] = last
-        for sid in stuck.keys() - self.stuck.keys():  # once each time it goes quiet
-            if self.notifications and sid != self.shown_id:
-                self.send_notification(f"{paths[sid].title} looks stuck: nothing written for {waited(stuck[sid])}")
-        self.stuck = stuck
-
-    def attention(self) -> dict[str, float]:
-        """Sessions that need you -> since when."""
-        return {**self.waiting, **self.permission_at}
-
-    def labels(self) -> dict[str, str]:
-        return {sid: waited(t) for sid, t in {**self.stuck, **self.attention()}.items()}
-
-    @work(thread=True, group="notify")
-    def send_notification(self, message: str) -> None:
-        notify.send(message)  # may wait on tmux; keep it off the UI thread
-
-    def poll_host(self) -> bool:
-        """Refresh which sessions run on our tmux server. Returns True if anything changed."""
-        try:
-            hosted, shown = self.host.hosted(), self.host.shown_all()
-        except (subprocess.CalledProcessError, OSError):
-            return False
-        changed = (hosted, shown) != (self.hosted, self.shown_ids)
-        self.hosted, self.shown_ids = hosted, shown
-        self.shown_id = shown[0] if shown else None
-        return changed
-
-
-    # ---- list ------------------------------------------------------------
 
     @property
     def narrowed(self) -> bool:
@@ -1015,194 +909,6 @@ class CSM(App[Session | None]):
 
     # ---- actions on a session --------------------------------------------
 
-    def resume(self, s: Session) -> None:
-        if not self.via_tab:
-            self.usage.record("open")
-            if s.id in self.waiting or s.id in self.permission:
-                self.signals.waiting_opened_by_hand += 1
-        self.via_tab = False
-        if (frac := context_fraction(s)) and frac > 0.8:
-            self.signals.opened_full_context = True
-        self.signals.long_scroll = self.signals.long_scroll or self.moves >= 20
-        self.moves = 0
-        if s.id in self.waiting or s.id in self.permission:
-            self.clear_attention(s.id)
-            self.rebuild()
-        self.resume_flow(s)
-
-    @work(thread=True, exclusive=True, group="resume")
-    def resume_flow(self, s: Session) -> None:
-        if s.id in self.hosted:
-            self.call_from_thread(self.start, s)
-            return
-        if (v := self.viewers.get(s.id)) in self.hosted:  # a csm pane is showing this background job
-            self.call_from_thread(self.start_launch, launch.resume(v, s.cwd, s.title))
-            return
-        live = self.live.get(s.id)
-        if live and ghostty.running():
-            try:
-                term = ghostty.find(s, live, ghostty.terminals())
-                if term and ghostty.focus(term.id):
-                    self.call_from_thread(self.notify, f"Switched to “{term.title}”", timeout=2)
-                    return
-            except RuntimeError:
-                pass
-        if live and desktop.can_open(live):
-            try:
-                desktop.open_session(live)
-                self.call_from_thread(self.notify, "Opened in Claude desktop", timeout=2)
-                return
-            except (OSError, subprocess.CalledProcessError):
-                pass
-        if live:
-            msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
-                   "Resuming it a second time means two processes writing one transcript. Resume anyway?")
-            self.call_from_thread(self.push_screen, Confirm(msg), lambda yes: yes and self.start(s))
-        else:
-            self.call_from_thread(self.start, s)
-
-    def start(self, s: Session, also: bool = False) -> None:
-        self.start_launch(launch.resume(s.id, s.cwd, s.title), also)
-
-    def clear_attention(self, sid: str) -> None:
-        self.waiting.pop(sid, None)
-        self.permission.pop(sid, None)
-        self.permission_at.pop(sid, None)
-        if sid in self.hook_notified:
-            self.hook_seen[sid] = self.hook_notified[sid]
-        self.hook_waiting.discard(sid)
-
-    def start_launch(self, l: Launch, also: bool = False) -> None:
-        self.clear_attention(l.focus_id)
-        if not self.host:
-            self.exit(l)
-            return
-        try:
-            (self.host.show_also if also else self.host.show)(l.focus_id, l.cwd, l.command, l.label[:40])
-        except subprocess.CalledProcessError as e:
-            self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
-        self.poll_host()
-        self.rebuild()
-
-    def current_project(self) -> str | None:
-        opt = self.query_one(SessionList).highlighted_option
-        if not opt or not opt.id:
-            return None
-        kind, key = opt.id[:2], opt.id[2:]
-        if kind in ("p:", "m:"):
-            return key
-        p = self.pending.get(key)
-        s = self.by_id.get(key)
-        return p.project if p else s.project if s else None
-
-    def begin(self, l: Launch, project: str, hidden: bool = False) -> None:
-        if not os.path.isdir(l.cwd):
-            self.notify(f"{tilde(l.cwd)} no longer exists", severity="error")
-            return
-        if self.host:
-            self.pending[l.focus_id] = Pending(l.focus_id, project, l)
-            self.focus_id = l.focus_id
-        if hidden and self.host:  # it has its instructions; stay in the list
-            try:
-                self.host.start(l.focus_id, l.cwd, l.command, l.label[:40])
-            except subprocess.CalledProcessError as e:
-                self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
-            self.poll_host()
-            self.rebuild()
-            self.notify(f"Started in {os.path.basename(project) or project}; enter to watch it", timeout=3)
-            return
-        self.start_launch(l)
-
-    def new_in(self, project: str, worktree: bool = False) -> None:
-        """Ask for a first message, then start a new session in the project."""
-        def done(text: str | None) -> None:
-            if text is not None:
-                self.begin(launch.new(project, worktree, text), project, hidden=bool(text))
-        self.push_screen(FirstMessage(tilde(project) + (" (new worktree)" if worktree else "")), done)
-
-    def action_new(self, worktree: bool = False) -> None:
-        if project := self.current_project():
-            self.new_in(project, worktree)
-
-    def action_new_project(self) -> None:
-        """New session in any directory, including one Claude has never run in (or one to create)."""
-        start = os.path.dirname(self.current_project() or "")
-        if not os.path.isdir(start):
-            start = next(d for d in (os.path.expanduser("~/projects"), os.path.expanduser("~")) if os.path.isdir(d))
-        start = tilde(start).rstrip("/") + "/"
-
-        def create(path: str, yes: bool) -> None:
-            if not yes:
-                return
-            try:
-                os.makedirs(path)
-            except OSError as e:
-                self.notify(f"Couldn't create {tilde(path)}: {e.strerror}", severity="error")
-                return
-            self.new_in(path)
-
-        def done(text: str | None) -> None:
-            if not text:
-                return
-            path = os.path.abspath(os.path.expanduser(text))
-            if os.path.isdir(path):
-                self.new_in(path)
-            elif os.path.exists(path):
-                self.notify(f"{tilde(path)} isn't a directory", severity="error")
-            else:
-                self.push_screen(Confirm(f"Create {tilde(path)}?"), lambda yes: create(path, yes))
-
-        self.push_screen(DirPrompt("New session in", start), done)
-
-    def action_brief(self) -> None:
-        if s := self.selected():
-            self.notify(f"Writing a brief of “{s.title}” for a new session…", timeout=4)
-            self.run_brief(s)
-
-    @work(thread=True, exclusive=True, group="brief")
-    def run_brief(self, s: Session) -> None:
-        try:
-            text = brief.write(s)
-        except Exception as e:  # credentials, network, refusal
-            self.call_from_thread(self.notify, f"Couldn't write a brief: {type(e).__name__}: {e}"[:300], severity="error")
-            return
-        self.call_from_thread(self.continue_fresh, s, text)
-
-    def continue_fresh(self, s: Session, text: str) -> None:
-        """Offer the brief as the first message of a new session where the old one ran."""
-        def done(message: str | None) -> None:
-            if message is not None:
-                self.begin(launch.new(s.cwd, prompt=message, name=f"{s.title} (continued)"), s.project,
-                           hidden=bool(message))
-        self.push_screen(FirstMessage(tilde(s.cwd), text), done)
-
-    def action_fork(self) -> None:
-        if s := self.selected():
-            self.begin(launch.fork(s.id, s.cwd, s.title), s.project)
-
-    def action_next_waiting(self, back: bool = False) -> None:
-        """Open the session that has needed you longest (permission requests first); shift+tab goes back."""
-        sessions = {s.id: s for s in self.sessions}
-        if back:
-            if self.trail:
-                self.trail.pop()
-            if not self.trail or not (s := sessions.get(self.trail[-1])):
-                self.notify("No earlier one", timeout=2)
-                return
-        else:
-            queue = sorted((t, sid) for sid, t in self.attention().items() if sid in sessions and sid not in self.permission)
-            asking = sorted((t, sid) for sid, t in self.permission_at.items() if sid in sessions)
-            if not (queue or asking):
-                self.notify("Nothing waiting", timeout=2)
-                return
-            s = sessions[(asking or queue)[0][1]]
-            self.trail = [*self.trail, s.id][-20:]
-        self.expanded.add(s.project)  # it may sit past the first few rows of its project
-        self.focus_id = s.id
-        self.via_tab = True
-        self.resume(s)
-        self.rebuild()
-
     def action_next_wave(self) -> None:
         bar = self.query_one(Activity)
         kind = WAVES[(WAVES.index(bar.kind) + 1) % len(WAVES)]
@@ -1211,177 +917,11 @@ class CSM(App[Session | None]):
         self.state.save()
         self.notify(f"Activity style: {kind}  ({WAVES.index(kind) + 1} of {len(WAVES)}; ~ or click for the next)", timeout=2)
 
-    def action_open_also(self) -> None:
-        if not self.host:
-            self.notify("Side by side needs csm running in tmux", severity="warning")
-        elif s := self.selected():
-            self.start(s, also=True)
-
-    def action_reply(self) -> None:
-        if not (s := self.selected()):
-            return
-        if not self.host or s.id not in self.hosted:
-            self.notify("Replies only work for sessions opened in csm", severity="warning")
-            return
-
-        def done(text: str | None) -> None:
-            if not text:
-                return
-            try:
-                sent = self.host.send(s.id, text)
-            except subprocess.CalledProcessError as e:
-                self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
-                return
-            self.clear_attention(s.id)
-            self.rebuild()
-            self.notify(f"Sent to “{s.title}”" if sent else "That session is no longer running", timeout=2)
-        self.push_screen(Prompt(f"Reply to {s.title}"), done)
-
-    def action_close_session(self) -> None:
-        if not (s := self.selected()):
-            return
-        if not self.host or s.id not in self.hosted:
-            self.notify("Only sessions opened here can be closed here", severity="warning")
-            return
-
-        def done(yes: bool) -> None:
-            if yes:
-                self.host.close(s.id)
-                self.poll_host()
-                self.rebuild()
-        live = self.live.get(s.id)
-        if live and live.status != "idle":
-            self.push_screen(Confirm(f"“{s.title}” is {live.status}. Stop it?"), done)
-        else:
-            done(True)
-
-    def retire_plan(self, targets: list[Session]) -> tuple[set[str], set[str], dict[str, int], list[str]]:
-        """(ids to archive, csm panes to close by session id, background jobs to stop {id: pid},
-        sessions left running elsewhere). A background job and the terminal attached to it go together."""
-        ids = {s.id for s in targets}
-        ids |= {self.viewers[i] for i in ids if i in self.viewers} | {bg for i in ids if (bg := self.viewing(i))}
-        panes = {i for i in ids if self.host and i in self.hosted}
-        jobs = {i: self.live[i].pid for i in ids if i in self.live and self.live[i].kind == "bg"}
-        attached = set(self.viewers.values())
-        elsewhere = [i for i in ids if i in self.live and i not in panes and i not in jobs and i not in attached]
-        return ids, panes, jobs, elsewhere
-
-    def action_retire(self) -> None:
-        if not (targets := self.targets()):
-            return
-        ids, panes, jobs, elsewhere = self.retire_plan(targets)
-        what = f"“{targets[0].title}”" if len(targets) == 1 else f"{len(targets)} sessions"
-        steps = []
-        if jobs:
-            steps.append("stop background job" + "s" * (len(jobs) > 1) + " (pid " + ", ".join(map(str, sorted(jobs.values()))) + ")")
-        if panes:
-            steps.append(f"close {len(panes)} csm pane" + "s" * (len(panes) > 1))
-        steps.append("archive " + ("it" if len(ids) == 1 else f"{len(ids)} sessions"))
-        busy = [i for i in ids if (l := self.live.get(i)) and l.status != "idle"]
-        msg = f"Retire {what}? This will {', '.join(steps)}."
-        if busy:
-            msg += f"\n{len(busy)} still working; that work stops too."
-        if elsewhere:
-            msg += f"\n{len(elsewhere)} running outside csm (Ghostty, desktop…) keep running; archived only."
-
-        def done(yes: bool) -> None:
-            if yes:
-                self.retire(targets)
-                self.marked.clear()
-                self.notify(f"Retired {what}", timeout=2)
-                self.rebuild()
-        self.push_screen(Confirm(msg), done)
-
-    def retire(self, targets: list[Session]) -> None:
-        ids, panes, jobs, _ = self.retire_plan(targets)
-        for i in panes:
-            try:
-                self.host.close(i)
-            except subprocess.CalledProcessError:
-                pass
-        for pid in jobs.values():
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-        self.state.archived |= ids
-        self.state.save()
-        if self.host:
-            self.poll_host()
-
-    def action_when_idle(self) -> None:
-        if not (s := self.selected()):
-            return
-        queued = self.state.when_idle.get(s.id, {}).get("do")
-        can_send = bool(self.host and s.id in self.hosted)
-
-        def queue(entry: dict) -> None:
-            self.state.when_idle[s.id] = entry
-            self.state.save()
-            self.notify(f"Will {entry['do']} “{s.title}” when it goes idle", timeout=2)
-            self.rebuild()
-
-        def picked(choice: str | None) -> None:
-            if choice == "cancel":
-                self.state.when_idle.pop(s.id, None)
-                self.state.save()
-                self.rebuild()
-            elif choice == "send":
-                self.push_screen(Prompt(f"Send to {s.title} when it goes idle"),
-                                 lambda text: text and queue({"do": "send", "text": text}))
-            elif choice:
-                queue({"do": choice})
-        self.push_screen(WhenIdle(s.title, queued, can_send), picked)
-
-    def run_when_idle(self, live: dict[str, LiveSession]) -> bool:
-        """Carry out queued actions for sessions that are idle or have stopped. True if any ran."""
-        due = [sid for sid in self.state.when_idle if (l := live.get(sid)) is None or l.status == "idle"]
-        for sid in due:
-            entry = self.state.when_idle.pop(sid)
-            s = self.by_id.get(sid)
-            title = s.title if s else sid[:8]
-            if entry["do"] == "notify":
-                self.send_notification(f"{title} is idle")
-            elif entry["do"] == "archive":
-                self.state.archived.add(sid)
-            elif entry["do"] == "retire" and s:
-                self.retire([s])
-            elif entry["do"] == "send" and self.host:
-                try:
-                    if self.host.send(sid, entry.get("text", "")):
-                        self.clear_attention(sid)
-                except subprocess.CalledProcessError:
-                    pass
-        if due:
-            self.state.save()
-        return bool(due)
-
     async def action_quit(self) -> None:
         if self.host and self.host.own:
             self.host.detach()  # sessions keep running; `csm` reattaches
         else:
             self.exit()
-
-    def action_open(self, where: str) -> None:
-        if not (s := self.selected()):
-            return
-        if live := self.live.get(s.id):
-            msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
-                   f"Open it in a new {where} anyway?")
-            self.push_screen(Confirm(msg), lambda yes: yes and self.open_in_ghostty(s, where))
-        else:
-            self.open_in_ghostty(s, where)
-
-    @work(thread=True, group="ghostty")
-    def open_in_ghostty(self, s: Session, where: str) -> None:
-        # AppleScript drives the running Ghostty. `open -na Ghostty.app` would start a
-        # second instance, which restores every saved tab alongside the new one.
-        try:
-            ghostty.open_session(s.cwd, launch.resume(s.id, s.cwd).command, where)
-        except RuntimeError as e:
-            self.call_from_thread(self.notify, f"Ghostty: {e}", severity="error")
-        else:
-            self.call_from_thread(self.notify, f"Opened “{s.title}” in a new {where}", timeout=2)
 
     def action_rename(self) -> None:
         if not (s := self.selected()):
