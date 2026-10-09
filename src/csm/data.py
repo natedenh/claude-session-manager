@@ -24,7 +24,7 @@ from . import autoarchive
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 8  # bump whenever parse_session changes
+CACHE_VERSION = 9  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -194,6 +194,7 @@ def _models_by_day(by_message: dict[str, tuple[str, str, float]]) -> dict[str, d
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
     first_uuid = copied_from = last_usage = None
+    compacted_to: int | None = None  # context size a /compact left, until the next reply reports its own
     cwds: list[str] = []  # distinct cwds, in first-seen order
     minutes: set[str] = set()
     memo: dict[str, tuple[str, int]] = {}
@@ -242,6 +243,14 @@ def parse_session(path: Path) -> Session | None:
                 if '"usage"' in line and '"type":"assistant"' in line and '"isSidechain":true' not in line \
                         and '"<synthetic>"' not in line:
                     last_usage = line  # parsed once at the end
+                    compacted_to = None
+                if '"compact_boundary"' in line and '"isSidechain":true' not in line:
+                    try:
+                        meta = json.loads(line).get("compactMetadata") or {}
+                        if isinstance(meta.get("postTokens"), int):
+                            compacted_to = meta["postTokens"]
+                    except (ValueError, AttributeError):
+                        pass
                 # Cheap prefilter; session files can be tens of MB.
                 if not ('"custom-title"' in line or '"ai-title"' in line or '"pr-link"' in line
                         or '"cost-state"' in line or '"relocated"' in line
@@ -289,6 +298,8 @@ def parse_session(path: Path) -> Session | None:
     except OSError:
         return None
     context_tokens, context_model = context_of(last_usage)
+    if compacted_to is not None:  # compacted since the last reply: that's the context now
+        context_tokens = compacted_to
     active: dict[str, int] = {}
     hours = [0] * 24
     for minute in minutes:

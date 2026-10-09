@@ -58,3 +58,21 @@ def test_row_flag_only_above_80_percent(paths, write, tmp_path):
 
 def test_cache_version_bumped():
     assert data.CACHE_VERSION >= 5
+
+
+def test_compaction_resets_context_until_the_next_reply(paths, write, tmp_path):
+    from conftest import rec, user
+    from csm import data
+    cwd = str(tmp_path)
+
+    def reply(tokens):
+        return rec(type="assistant", timestamp="2026-10-09T01:00:00Z",
+                   message={"model": "claude-opus-5-5", "id": f"m{tokens}", "content": [],
+                            "usage": {"input_tokens": 1, "cache_read_input_tokens": tokens, "output_tokens": 10}})
+    boundary = rec(type="system", subtype="compact_boundary", isSidechain=False,
+                   compactMetadata={"trigger": "manual", "preTokens": 935_000, "postTokens": 13_747})
+    f = write(cwd, "c1", user("hi", cwd), reply(935_000), boundary)
+    s = data.parse_session(f)
+    assert s.context_tokens == 13_747 and s.context_model == "claude-opus-5-5"
+    f = write(cwd, "c2", user("hi", cwd), reply(935_000), boundary, reply(20_000))
+    assert data.parse_session(f).context_tokens == 20_011  # the reply after it reports its own size
