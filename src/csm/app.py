@@ -81,7 +81,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         scrollbar-background-active: $background; }
     #activity { height: 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
-    Prompt, Confirm, Help, AutoArchiveSettings { align: center middle; }
+    Prompt, Confirm, Help, AutoArchiveSettings, DirPrompt, FirstMessage, WhenIdle, FolderGone { align: center middle; }
+    .dialog > Label { width: 100%; }  /* wrap long titles and paths rather than cutting them off */
     .dialog .row { height: auto; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
     .dialog Input { margin-top: 1; }

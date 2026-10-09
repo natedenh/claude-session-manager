@@ -87,3 +87,25 @@ def test_origin_survives_a_cache_hit(paths, write, tmp_path):
     shutil.rmtree(tmp_path / "gone-later")
     [cached] = data.load_sessions(paths)  # unchanged transcript: served from the cache
     assert cached.origin == s.origin == str(tmp_path / "gone-later") and f.exists()
+
+
+async def test_dialogs_are_centred_and_wrap(sessions, tmp_path):  # noqa: F811
+    from csm.dialogs import AutoArchiveSettings, Confirm, DirPrompt, FirstMessage, Prompt, WhenIdle
+    from csm import autoarchive
+    long = "a very long session title that goes on " * 3
+    dialogs = [FolderGone(long, "/r/web/.claude/worktrees/" + "x" * 80, "fix-login"), Confirm(long), Prompt(long),
+               DirPrompt(long, "~/"), FirstMessage("~/code/" + "y" * 90), WhenIdle(long, None, True),
+               AutoArchiveSettings(autoarchive.normalize(None))]
+    app = CSM(sessions)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await settle(pilot)
+        for d in dialogs:
+            app.push_screen(d)
+            await pilot.pause()
+            box = app.screen.query_one(".dialog")
+            assert box.region.x > 0 and box.region.y > 0, type(d).__name__  # not stuck in the corner
+            for label in app.screen.query("Label"):
+                assert label.region.right <= box.region.right, type(d).__name__  # nothing cut off
+            assert max(lbl.region.height for lbl in app.screen.query("Label")) >= 2 or isinstance(d, AutoArchiveSettings)
+            app.pop_screen()
+            await pilot.pause()
