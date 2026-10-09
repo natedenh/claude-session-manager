@@ -301,3 +301,18 @@ def test_concurrent_json_writes_dont_collide(tmp_path):
         t.join()
     assert errors == [] and json.loads(target.read_text())["i"] == 199
     assert [p.name for p in tmp_path.iterdir()] == ["prs.json"]  # no temp files left behind
+
+
+def test_models_per_day_come_from_the_message_not_tool_inputs(paths, write, tmp_path):
+    cwd = str(tmp_path)
+
+    def msg(mid, model, out, tool_model=None):
+        content = [{"type": "tool_use", "name": "Agent", "input": {"model": tool_model}}] if tool_model else []
+        return rec(type="assistant", timestamp="2026-09-30T15:00:00Z",
+                   message={"model": model, "id": mid, "content": content,
+                            "usage": {"input_tokens": 0, "output_tokens": out}})
+    f = write(cwd, "m1", user("hi", cwd), msg("a", "claude-opus-5-5", 100, tool_model="sonnet"),
+              msg("a", "claude-opus-5-5", 100), msg("b", "claude-sonnet-5-5", 40), msg("c", "<synthetic>", 9))
+    s = data.parse_session(f)
+    day = next(iter(s.day_models))
+    assert s.day_models[day] == {"claude-opus-5-5": 500.0, "claude-sonnet-5-5": 200.0}

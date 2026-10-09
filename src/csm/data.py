@@ -24,12 +24,13 @@ from . import autoarchive
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 7  # bump whenever parse_session changes
+CACHE_VERSION = 8  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
 TIMESTAMP_RE = re.compile(r'"timestamp":"([^"]+)"')
 MSG_ID_RE = re.compile(r'"message":\{[^{]*?"id":"([^"]+)"')
+MSG_MODEL_RE = re.compile(r'"message":\{[^{]*?"model":"([^"]+)"')  # the message's own, not a tool input's
 USAGE_RE = {k: re.compile(rf'"{k}":(\d+)') for k in
             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")}
 # Relative price of each kind of token; the same on every current Claude model.
@@ -91,6 +92,7 @@ class Session:
     # Token weight since the last cost record, per day: not priced yet (see stats.rate).
     day_unpriced: dict[str, float] = field(default_factory=dict)
     priced_weight: float = 0.0  # token weight the recorded cost covers, to learn $ per weight
+    day_models: dict[str, dict[str, float]] = field(default_factory=dict)  # day -> model -> token weight
     day_lines: dict[str, int] = field(default_factory=dict)
     skills: dict[str, int] = field(default_factory=dict)
 
@@ -182,6 +184,13 @@ def _by_day(pending: dict[str, tuple[str, float]]) -> dict[str, float]:
     return out
 
 
+def _models_by_day(by_message: dict[str, tuple[str, str, float]]) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    for d, model, w in by_message.values():
+        out.setdefault(d, {})[model] = out.setdefault(d, {}).get(model, 0.0) + w
+    return out
+
+
 def parse_session(path: Path) -> Session | None:
     custom = ai = first_prompt = pr = pr_url = branch = cost = started = relocated = None
     first_uuid = copied_from = last_usage = None
@@ -194,6 +203,7 @@ def parse_session(path: Path) -> Session | None:
     day_lines: dict[str, int] = {}
     skills: Counter = Counter()
     pending: dict[str, tuple[str, float]] = {}  # message id -> (day, token weight), since the last cost record
+    by_message: dict[str, tuple[str, str, float]] = {}  # message id -> (day, model, weight), the whole session
     priced_weight = 0.0
     st = path.stat()
     try:
@@ -210,6 +220,8 @@ def parse_session(path: Path) -> Session | None:
                     weight = sum(w * int(u.group(1)) for k, w in TOKEN_WEIGHT.items() if (u := USAGE_RE[k].search(line)))
                     if (lt := _local(last_ts[:16], memo)) and weight:
                         pending[m.group(1)] = (lt[0], weight)
+                        if (mm := MSG_MODEL_RE.search(line)) and mm.group(1) != "<synthetic>":
+                            by_message[m.group(1)] = (lt[0], mm.group(1), weight)
                 if '"name":"Skill"' in line and '"type":"assistant"' in line:
                     try:
                         for c in json.loads(line).get("message", {}).get("content") or []:
@@ -309,7 +321,7 @@ def parse_session(path: Path) -> Session | None:
         context_tokens=context_tokens, context_model=context_model,
         born=getattr(st, "st_birthtime", st.st_ctime),
         active=active, hours=hours, day_cost={k: round(v, 4) for k, v in day_cost.items()},
-        day_unpriced=_by_day(pending), priced_weight=priced_weight,
+        day_unpriced=_by_day(pending), priced_weight=priced_weight, day_models=_models_by_day(by_message),
         day_lines=day_lines, skills=dict(skills),
     )
 

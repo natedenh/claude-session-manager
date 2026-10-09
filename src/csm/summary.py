@@ -1,6 +1,6 @@
 """The Summary page: what needs you, what was decided, what got done, what's running.
 
-Each recently active session's tail is summarized by a small model (Claude Haiku 4.5) into a
+Each recently active session's tail is summarized by a small model (Claude Haiku 5.5) into a
 structured digest, cached until its transcript changes. The page itself is assembled from
 those digests plus live state, so it renders instantly and works without any model at all.
 """
@@ -84,9 +84,9 @@ def make_client():
             aws_region=env.get("AWS_REGION") or env.get("AWS_DEFAULT_REGION") or "us-east-1",
             aws_profile=env.get("AWS_PROFILE"))
         model = env.get("CSM_SUMMARY_MODEL") or env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") \
-            or "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            or "us.anthropic.claude-haiku-5-5"
         return client, model
-    return anthropic.Anthropic(), env.get("CSM_SUMMARY_MODEL", "claude-haiku-4-5")
+    return anthropic.Anthropic(), env.get("CSM_SUMMARY_MODEL", "claude-haiku-5-5")
 
 
 def render_turns(s: Session) -> str:
@@ -169,7 +169,7 @@ def refresh(paths: Paths, sessions: list[Session], live: dict[str, LiveSession],
         model = None
         if client is None:
             client, model = make_client()
-        model = model or "claude-haiku-4-5"
+        model = model or "claude-haiku-5-5"
         for s in todo:
             if cancelled():
                 break

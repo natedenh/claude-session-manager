@@ -16,6 +16,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Static
 
 from .costs import heading, money, table
+from . import models
 from .data import Session
 from .usage import FEATURES, LEARNING_DAYS, Usage
 
@@ -45,6 +46,48 @@ def rate(sessions: Iterable[Session]) -> float:
 
 def spend(s: Session, day: str, per_weight: float) -> float:
     return s.day_cost.get(day, 0.0) + s.day_unpriced.get(day, 0.0) * per_weight
+
+
+def by_model(sessions: Iterable[Session], start: date, end: date, per_weight: float) -> dict[str, float]:
+    """Cost per model between start and end: each session-day's cost, split by its models' tokens."""
+    out: dict[str, float] = {}
+    for s in sessions:
+        for d in s.day_cost.keys() | s.day_unpriced.keys():
+            if not start <= date.fromisoformat(d) <= end or not (cost := spend(s, d, per_weight)):
+                continue
+            mix = s.day_models.get(d) or {"": 1.0}  # older or odd transcripts: model unknown
+            weight = sum(mix.values())
+            for model, w in mix.items():
+                out[model] = out.get(model, 0.0) + cost * w / weight
+    return out
+
+
+def model_section(sessions: list[Session], today: date, per_weight: float) -> list:
+    monday = today - timedelta(days=today.weekday())
+    week = by_model(sessions, monday, today, per_weight)
+    month = by_model(sessions, today - timedelta(days=29), today, per_weight)
+    if not month:
+        return []
+    total = sum(month.values())
+    t = table(("Model", "left"), ("This week", "right"), ("Last 30 days", "right"), ("Share", "right"))
+    for model, cost in sorted(month.items(), key=lambda kv: -kv[1]):
+        t.add_row(models.label(model) or "unknown", money(week.get(model, 0.0)), money(cost), f"{cost / total:.0%}")
+    out: list = [heading("Models"), t]
+    for name, period in (("This week", week), ("The last 30 days", month)):
+        paid = sum(period.values())
+        if not paid:
+            continue
+        lines = []
+        for to in (models.SONNET, models.HAIKU):
+            other = [models.rescale(c, m, to) for m, c in period.items()]
+            if None in other:  # a model we can't price: leave it as it was
+                other = [o if o is not None else c for o, c in zip(other, period.values())]
+            would = sum(other)
+            lines.append(f"on {to[0].title()} {to[1]} about {money(would)} ({(would - paid) / paid:+.0%})")
+        out.append(Text(f"{name} cost {money(paid)}; " + ", ".join(lines) + ".", style="dim"))
+    out.append(Text("List-price ratios applied to what you paid. It says nothing about whether a cheaper model "
+                    "would have done the work as well.", style="dim italic"))
+    return out
 
 
 def daily(sessions: Iterable[Session], per_weight: float | None = None) -> dict[date, Day]:
@@ -208,6 +251,7 @@ def render(sessions: list[Session], today: date | None = None, usage: Usage | No
            heading(f"Last {DAYS} days"), per_day,
            heading("Busiest projects this week"), proj if projects else Text("Nothing yet this week.", style="dim"),
            heading("Cost by week"), weekly,
+           *model_section(sessions, today, per_weight),
            heading("When you work"), Text("Active minutes by hour of the day, all time.", style="dim"), clock,
            heading("Most-used skills"), sk if skills else Text("No skills used yet.", style="dim")]
     if usage is not None:

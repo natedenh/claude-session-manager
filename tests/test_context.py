@@ -44,7 +44,7 @@ def test_style_thresholds():
 def test_preview_text(paths, write, tmp_path):
     s = parsed(paths, write, tmp_path, turn(104_000))
     line = context_line(s)
-    assert line.plain == "context ▰▰▰▰▰▱▱▱▱▱ 52% · 104k of 200k tokens"
+    assert line.plain == "opus 5 · context ▰▰▰▰▰▱▱▱▱▱ 52% · 104k of 200k tokens"
     assert line.style == "warn"
 
 

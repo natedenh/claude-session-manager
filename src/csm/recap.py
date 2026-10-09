@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
+from . import models
 from .data import Session
 from .stats import daily, rate, span, spend, streaks
 from .summary import Digests
@@ -57,6 +58,8 @@ def render(sessions: list[Session], day: date, digests: Digests, last_said: Call
         out += ["", f"## {ss[0].project_name} · {span(mins(ss))} · {money(spent(ss))}"]
         for s in sorted(ss, key=lambda s: -s.active.get(key, 0)):
             facts = [span(s.active[key]), money(spend(s, key, per_weight))]
+            if mix := s.day_models.get(key):
+                facts.append(" + ".join(models.label(m) for m, _ in sorted(mix.items(), key=lambda kv: -kv[1])))
             if s.pr_number:
                 facts.append(f"[PR #{s.pr_number}]({s.pr_url})" + (f" {t}" if (t := pr_text(s)) else ""))
             if s.branch and s.branch not in ("main", "master", "HEAD"):

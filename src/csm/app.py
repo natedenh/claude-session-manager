@@ -27,7 +27,7 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, hooks, links, prs, recap, summary, tips, usage, tmux, worktrees
+from . import autoarchive, data, desktop, export, hooks, links, models, prs, recap, summary, tips, usage, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .attention import AttentionMixin
 from .costs import Costs
@@ -430,6 +430,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
         then = Text(f"  @{q['do']}", style="cyan") if (q := self.state.when_idle.get(s.id)) else Text()
+        fam = models.family(s.context_model) if getattr(self, "mixed_models", False) else None
+        then = Text.assemble((f"  {fam}", "dim"), then) if fam else then
         wait = (f"{waited(t)} ", dot[1]) if (t := self.attention().get(s.id) or self.stuck.get(s.id)) else ""
         return Text.assemble(mark, dot, icon, wait, (s.title, title), fork, bg, then, context_flag(s), tags, project)
 
@@ -479,6 +481,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.focus_id = None
         visible = self.visible()
         titles = Counter(s.title for s in visible)
+        # Rows name their model only when the list mixes families; all-Opus rows would just be noise.
+        self.mixed_models = len({models.family(s.context_model) for s in visible if s.context_model} - {None}) > 1
         self.same_name = {t for t, n in titles.items() if n > 1}
         pending = self.pending_groups()
         pinned = [s for s in visible if s.id in self.state.pinned]

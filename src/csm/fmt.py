@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from rich.text import Text
 
-from . import data, prs
+from . import data, models, prs
 from .data import Session
 
 
@@ -102,7 +102,8 @@ def context_line(s: Session) -> Text | None:
         return None
     window = data.context_window(s.context_model, s.context_tokens)
     filled = min(10, int(frac * 10))
-    return Text(f"context {'▰' * filled}{'▱' * (10 - filled)} {frac:.0%} · "
+    model = f"{models.label(s.context_model)} · " if s.context_model else ""
+    return Text(f"{model}context {'▰' * filled}{'▱' * (10 - filled)} {frac:.0%} · "
                 f"{s.context_tokens // 1000}k of {'1M' if window >= 1_000_000 else f'{window // 1000}k'} tokens",
                 style=context_style(frac))
 

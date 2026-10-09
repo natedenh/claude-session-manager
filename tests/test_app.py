@@ -919,3 +919,17 @@ def test_theme_falls_back_without_macos_defaults(monkeypatch):
         raise FileNotFoundError("defaults")
     monkeypatch.setattr(appmod.subprocess, "run", missing)
     assert appmod.default_theme() == "ansi-dark"
+
+
+async def test_rows_name_the_model_only_when_families_mix(sessions):
+    app = CSM(sessions)
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        for s in app.sessions:
+            s.context_model = "claude-opus-5-5"
+        app.rebuild()
+        assert "opus" not in app.row(app.by_id["a1"]).plain
+        app.by_id["b1"].context_model, app.by_id["b1"].context_tokens = "claude-sonnet-5-5", 50_000
+        app.rebuild()
+        assert "  opus" in app.row(app.by_id["a1"]).plain and "  sonnet" in app.row(app.by_id["b1"]).plain
+        assert "sonnet 5.5 · context" in "".join(str(r) for r in app.meta(app.by_id["b1"]).renderables)
