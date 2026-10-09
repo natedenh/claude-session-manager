@@ -13,6 +13,7 @@ from textual.suggester import Suggester
 from textual.widgets import Input, Label, Static, Switch, TextArea
 
 from . import autoarchive
+from .fmt import tilde
 
 
 HELP = """\
@@ -185,6 +186,32 @@ class FirstMessage(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class FolderGone(ModalScreen[str | None]):
+    """A session's folder was deleted or moved. Claude Code finds a session by the folder it runs
+    in, so resuming from anywhere else wouldn't find it: offer to put the folder back."""
+    BINDINGS = [Binding("w", "pick('worktree')", show=False), Binding("e", "pick('folder')", show=False),
+                Binding("escape", "pick", show=False), Binding("c", "pick", show=False)]
+
+    def __init__(self, title: str, folder: str, branch: str | None):
+        super().__init__()
+        self.title_text, self.folder, self.branch = title, folder, branch  # branch: re-adding a worktree is possible
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(f"“{self.title_text}” ran in {tilde(self.folder)}, which is gone.", markup=False)
+            yield Label("Claude Code finds a session by its folder, so it can't be resumed from anywhere else.",
+                        markup=False)
+            choices = (f"  w  re-add the worktree from branch {self.branch}\n" if self.branch else "") + \
+                "  e  create an empty folder there, to resume the conversation\n  c  cancel"
+            yield Label(choices, markup=False)
+            yield Label("[dim]esc = cancel[/]")
+
+    def action_pick(self, choice: str | None = None) -> None:
+        if choice == "worktree" and not self.branch:
+            return
+        self.dismiss(choice)
 
 
 class Confirm(ModalScreen[bool]):

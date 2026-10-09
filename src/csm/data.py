@@ -24,7 +24,7 @@ from . import autoarchive
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 9  # bump whenever parse_session changes
+CACHE_VERSION = 10  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -69,6 +69,7 @@ class Session:
     title: str
     project: str  # directory the session is grouped under; worktrees fold into their repo
     cwd: str  # directory to run `claude -r` from
+    origin: str = ""  # the directory Claude Code finds this session from; may be gone since
     branch: str | None = None
     pr_number: int | None = None
     pr_url: str | None = None
@@ -326,7 +327,7 @@ def parse_session(path: Path) -> Session | None:
     cwd = next((c for c in (home, where, project) if c and os.path.isdir(c)), project)
 
     return Session(
-        id=path.stem, path=str(path), title=title, project=project, cwd=cwd, branch=branch,
+        id=path.stem, path=str(path), title=title, project=project, cwd=cwd, origin=home or where, branch=branch,
         pr_number=pr, pr_url=pr_url, worktree=worktree, worktrees=worktrees, cost=cost, started=started,
         mtime=st.st_mtime, size=st.st_size, first_uuid=first_uuid, copied_from=copied_from,
         context_tokens=context_tokens, context_model=context_model,

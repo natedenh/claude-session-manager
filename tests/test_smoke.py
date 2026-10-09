@@ -149,6 +149,13 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
         await pilot.press("escape")
         await draw(pilot, app)
 
+        # the folder-gone dialog, with a path and branch full of brackets
+        from csm.dialogs import FolderGone
+        app.push_screen(FolderGone(NASTY[0], "/r/[x]/.claude/worktrees/[/]wip", "[red]b"))
+        await draw(pilot, app)
+        await pilot.press("escape")
+        await draw(pilot, app)
+
         # toasts, including every tip and every session title
         for tip in tips.TIPS:
             app.notify(f"{tip.text}\n(ctrl+t turns tips off)")

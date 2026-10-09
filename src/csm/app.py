@@ -790,6 +790,9 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             lines.append(Text.assemble(("note: ", "dim"), note))
         if by := self.archived_by(s):
             lines.append(Text(self.auto_reason(s) if by == "auto" else f"archived in {by}", style="warn.italic"))
+        if s.origin and not os.path.isdir(s.origin):
+            lines.append(Text(f"⚠ this session's folder is gone: {tilde(s.origin)}. Enter offers to put it back.",
+                              style="warn"))
         lines.append(Text(f"{tilde(s.cwd)}  ·  {s.id}", style="dim"))
         if self.hits and s.id in self.hits:
             lines.append(Text(""))

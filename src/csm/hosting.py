@@ -8,9 +8,9 @@ import subprocess
 
 from textual import work
 
-from . import brief, desktop, ghostty, launch
+from . import brief, data, desktop, ghostty, launch, worktrees
 from .data import Session
-from .dialogs import Confirm, DirPrompt, FirstMessage, Prompt
+from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, Prompt
 from .fmt import context_fraction, tilde
 from .launch import Launch, Pending
 from .widgets import SessionList
@@ -46,7 +46,40 @@ class HostingMixin:
         if s.id in self.waiting or s.id in self.permission:
             self.clear_attention(s.id)
             self.rebuild()
+        if s.origin and s.id not in self.live and s.id not in self.hosted:
+            if not os.path.isdir(s.origin):
+                self.folder_gone(s)
+                return
+            s.cwd = s.origin  # it may have been missing when the transcript was read, and back since
         self.resume_flow(s)
+
+    def folder_gone(self, s: Session) -> None:
+        """Offer to put a deleted or moved folder back, so Claude Code can find the session again."""
+        branch = None
+        if data.WORKTREE_MARK in s.origin and s.branch and os.path.isdir(s.project):
+            r = worktrees.git(["rev-parse", "--verify", "--quiet", f"refs/heads/{s.branch}"], s.project)
+            branch = s.branch if r is not None and r.returncode == 0 else None
+
+        def done(choice: str | None) -> None:
+            if choice == "worktree":
+                r = worktrees.git(["worktree", "add", s.origin, s.branch], s.project)
+                if r is None or r.returncode:
+                    msg = (r.stderr or r.stdout).strip() if r is not None else "git did not finish"
+                    self.notify(f"Couldn't re-add the worktree: {msg}", severity="error", timeout=8)
+                    return
+                self.notify(f"Re-added {tilde(s.origin)} from {s.branch}", timeout=3)
+            elif choice == "folder":
+                try:
+                    os.makedirs(s.origin, exist_ok=True)
+                except OSError as e:
+                    self.notify(f"Couldn't create {tilde(s.origin)}: {e.strerror}", severity="error")
+                    return
+            else:
+                return
+            s.cwd = s.origin
+            self.rebuild()
+            self.resume_flow(s)
+        self.push_screen(FolderGone(s.title, s.origin, branch), done)
 
     @work(thread=True, exclusive=True, group="resume")
     def resume_flow(self, s: Session) -> None:

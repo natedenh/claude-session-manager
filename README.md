@@ -169,6 +169,8 @@ The hook writes `~/.local/state/csm/status/<session id>.json` (removed at sessio
 - **To GitHub, through `gh`:** PR URLs from your sessions, to look up their status.
 - No telemetry. The usage log stays on disk and is only read by csm's tips.
 
+If the folder a session ran in has been deleted or moved, its preview says so, and resuming it asks what to do instead of starting Claude Code somewhere it can't find the session (Claude Code looks a session up by its folder). For a deleted worktree whose branch still exists, `w` re-adds the worktree from that branch; `e` creates an empty folder at the old path so the conversation can carry on; `c` or `esc` cancels.
+
 Sessions are grouped by the directory they were launched in, or the directory they were relocated to. Worktrees fold into their repo. A `cd` during the session doesn't regroup it.
 
 ## Development
