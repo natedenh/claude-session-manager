@@ -2,7 +2,7 @@
 
 `csm` is a terminal UI for Claude Code sessions: the desktop app's sidebar, plus search, filters, and resume.
 
-![Sessions grouped by project, with a running session's preview](docs/screenshots/sessions.svg)
+![csm in tmux: the session list on the left, a Claude Code session running beside it](docs/screenshots/sidebar.svg)
 
 An independent project, not made by or affiliated with Anthropic. It reads Claude Code's own files, which aren't a public API, so a Claude Code update can break something until csm catches up.
 
@@ -177,7 +177,7 @@ Sessions are grouped by the directory they were launched in, or the directory th
 uv run pytest
 ```
 
-CI runs the tests on every push. `tests/test_smoke.py` draws every screen, dialog and notification with data built to break rendering; if you add a screen, add it there. `uv run python scripts/screenshots.py` regenerates the screenshots in `docs/screenshots/` from made-up sessions.
+CI runs the tests on every push. `tests/test_smoke.py` draws every screen, dialog and notification with data built to break rendering; if you add a screen, add it there. `uv run python scripts/screenshots.py` regenerates the Summary and stats screenshots in `docs/screenshots/` from made-up sessions, and `uv run python scripts/screenshot_tmux.py` the sidebar one: it stages csm on a throwaway tmux server beside a real Claude Code session resuming a made-up transcript (no model is called) and captures both panes.
 
 ## License
 
