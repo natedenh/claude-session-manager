@@ -1,6 +1,6 @@
 from datetime import date
 
-from csm import recap, summary
+from csm import links, recap, summary
 from csm.data import Session
 from test_app import sessions  # noqa: F401  (fixture)
 
@@ -56,5 +56,5 @@ async def test_J_writes_and_opens_todays_recap(sessions, monkeypatch, tmp_path):
         await app.workers.wait_for_complete()
         await settle(pilot)
     [path] = (tmp_path / "notes").iterdir()
-    assert "Fix login bug" in path.read_text() and ["open", str(path)] in opened
+    assert "Fix login bug" in path.read_text() and [links.OPENER, str(path)] in opened
 
