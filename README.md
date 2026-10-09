@@ -78,6 +78,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `W` | clean up worktrees (see below) |
 | `J` | write today's recap, `<date> Claude recap.md`, and open it. It has the day's Claude time, cost, lines added and streak; what still needs you; then each project and session with its time, cost, PR and branch, plus what it finished and decided, from the Summary page's digests (refreshed first; without one, a session shows the end of its last message). It goes to `CSM_RECAP_DIR` if set, such as a folder in your Obsidian vault, else the export folder. Pressing it again later replaces that day's file |
 | `ctrl+t` | tips on or off. csm counts which features you use (only action names and dates, in `~/.local/state/csm/usage.json`) and, when what you're doing is what a feature is for, suggests it: `tab` when you open waiting sessions by hand, `ctrl+]` when you go back to the list just to press `tab`, `B` when a session's context is over 80%, `/` and `]` after a long scroll, `space` then `x` when you archive one at a time, `J` late in a busy day. At most one tip every 10 minutes and each at most once a day; a tip stops once you've used its feature a few times. The `I` screen ends with "Your csm": your most-used features this week, ones you haven't tried, and ones you haven't used in two weeks |
+| `U` | routines from the Claude desktop app, with schedules, status and runs (see Routines below) |
 | `I` | stats: Claude time, sessions, cost and lines added for today, this week and last week; your streak of active days; the last 14 days as bars; busiest projects this week; cost by week; active minutes by hour of the day; most-used skills. Claude time adds up each session's active minutes (minutes it wrote anything), so sessions side by side count separately |
 | `$` | costs: totals, by project, by week, top sessions (`esc`/`q`/`$` closes) |
 | `*` | pin / unpin a session (pinned sessions form a group at the top) |
@@ -104,6 +105,12 @@ Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree
 The `◎ Summary` row at the top of the list (or `S` from anywhere) covers the last 48 hours across all sessions: **Needs you** (the question each waiting session ended on, and permission requests), **Decisions**, **Finished** work, and what's **Still running**. In the summary screen, `enter` opens the session an item came from.
 
 Each recently active session that has settled (idle, unchanged for a minute) is summarized by Claude Haiku 5.5 (or whatever Claude Code uses for "haiku") from its last 16 turns, one session at a time in the background, and cached in `~/.cache/csm/summaries.json` until its transcript changes. csm calls Claude the way Claude Code is configured to: when `~/.claude/settings.json` sets `CLAUDE_CODE_USE_BEDROCK`, it uses Bedrock with that file's `AWS_PROFILE`, `AWS_REGION` and `ANTHROPIC_DEFAULT_HAIKU_MODEL`; otherwise the Anthropic API. `CSM_SUMMARY_MODEL` overrides the model. If a call fails (for example an expired SSO login), the page says so and csm retries after 5 minutes. Without summaries, "Needs you" still works from each session's last message.
+
+## Routines
+
+The Claude desktop app's routines (Code ▸ Routines: scheduled tasks) show up in csm: a `◷ Routines` row at the top of the list says how many are active and when the next one runs, and `U` or enter on it lists them all with their schedule in plain words ("every 6 hours", "weekdays at 9:30 AM", "once, Oct 7 at 9:00 AM"), status (active, paused, scheduled, completed), next and last run. Enter on a routine shows its description, folder, instructions and every run with the app's one-line summary of how it ended; enter on a run takes you to that session in the list. Runs appear in the list like any session, marked `◷`, and the preview says which routine they belong to and how the run ended. When a new run's result appears, csm shows it and sends a notification.
+
+The desktop app keeps running routines on its own schedule, whether or not csm is open; csm reads its `scheduled-tasks.json` and each routine's `SKILL.md` and never changes them. To create, edit, pause or run one, use the app. Cowork routines are listed too, but their runs aren't stored where csm can read them.
 
 ## Stats
 
@@ -146,6 +153,7 @@ The hook writes `~/.local/state/csm/status/<session id>.json` (removed at sessio
 - **Sessions:** `~/.claude/projects/*/*.jsonl`, the transcripts Claude Code writes. `CLAUDE_CONFIG_DIR` is honored.
 - **Live status:** `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
 - **Claude desktop's archive:** `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`, except while it's working, waiting on you or shown beside the list: then it reappears, dimmed, and hides again once it's settled. csm never changes the desktop app's archive.
+- **Claude desktop's routines:** `~/Library/Application Support/Claude*/claude-code-sessions/*/*/scheduled-tasks.json` (and Cowork's under `local-agent-mode-sessions/`), plus each routine's `SKILL.md`. Read only.
 - **Claude Code's settings**, `~/.claude/settings.json`, only to call Claude the way Claude Code does (provider, AWS profile and region, model names).
 
 **Writes, all its own**

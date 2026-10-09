@@ -27,7 +27,7 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
-from . import autoarchive, data, desktop, export, hooks, links, models, prs, recap, summary, tips, usage, tmux, worktrees
+from . import autoarchive, data, desktop, export, hooks, links, models, prs, routines, recap, summary, tips, usage, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .attention import AttentionMixin
 from .costs import Costs
@@ -35,6 +35,7 @@ from .hosting import HostingMixin
 from .dialogs import AutoArchiveSettings, Confirm, Help, Prompt
 from .fmt import (ago, context_flag, context_line, git_flags, last_days, pr_style, pr_summary,
                   sparkline, tilde, waited)
+from .routines_view import Routines, overview as routines_overview
 from .widgets import SessionList
 from .stats import Stats
 from .data import LiveSession, Message, Session, normalize_tags
@@ -133,6 +134,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         Binding("t", "transcript", "Transcript"),
         Binding("dollar_sign", "costs", "Costs"),
         Binding("I", "stats", "Stats", show=False),
+        Binding("U", "routines", "Routines", show=False),
         Binding("J", "recap", "Recap", show=False),
         Binding("W", "worktrees", "Worktrees", show=False),
         Binding("S", "summary", "Summary", show=False),
@@ -155,6 +157,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.via_tab = False
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
+        self.routines: list[routines.Routine] = []
+        self.results_seen: set[tuple[str, str]] | None = None  # routine run results already announced
         self.host = host  # set when running as the sidebar of a tmux window
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
         self.shown_id: str | None = None
@@ -239,7 +243,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         sessions = data.load_sessions(self.paths)
         live = data.load_live(self.paths)
         desktop = data.load_desktop(self.paths)
-        self.call_from_thread(self.set_sessions, sessions, live, desktop)
+        rs = routines.load(self.paths)
+        self.call_from_thread(self.set_sessions, sessions, live, desktop, rs)
 
     @work(thread=True, exclusive=True, group="prs")
     def refresh_prs(self) -> None:
@@ -254,9 +259,16 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             self.rebuild()
 
     def set_sessions(self, sessions: list[Session], live: dict[str, LiveSession],
-                     desktop: dict[str, data.DesktopRecord]) -> None:
+                     desktop: dict[str, data.DesktopRecord], rs: list | None = None) -> None:
+        if rs is not None:
+            for r in rs:  # runs, newest first
+                r.runs = sorted((rec for rec in desktop.values() if rec.routine == r.id), key=lambda x: -x.created)
+            self.announce_results(rs)
         changed = ([(s.id, s.mtime, s.title) for s in sessions] != [(s.id, s.mtime, s.title) for s in self.sessions]
-                   or desktop != self.desktop)
+                   or desktop != self.desktop or (rs is not None and
+                   [(r.id, r.enabled, r.last_run, len(r.runs)) for r in rs] != [(r.id, r.enabled, r.last_run, len(r.runs)) for r in self.routines]))
+        if rs is not None:
+            self.routines = rs
         self.track(live)
         self.sessions, self.live, self.desktop = sessions, live, desktop
         if changed or not self.loaded:
@@ -424,7 +436,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         live = self.live.get(s.id)
         style = STATUS_STYLE.get(live.status, "cyan") if live else ""
         dot = self.marker(s, live, style)
-        icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree else ("○ ", "dim")
+        icon = ("⇄ ", pr_style(self.pr_status.get(s.pr_url or ""))) if s.pr_number else ("⑂ ", "magenta") if s.worktree \
+            else ("◷ ", "cyan") if (rec := self.desktop.get(s.id)) and rec.routine else ("○ ", "dim")
         title = "dim italic" if self.archived_by(s) else "bold" if s.id in self.waiting or s.id in self.permission else ""
         fork = self.fork_tag(s)
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
@@ -511,6 +524,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         options: list[Option | None] = []
         if not self.narrowed:
             options.append(Option(self.summary_row(), id="S:summary"))  # groups add their own spacer
+            if self.routines:
+                options.append(Option(self.routines_row(), id="R:routines"))
         self.by_id, self.row_args = {}, {}
         for project, name, sessions, cap, with_project in sections:
             new = pending_for(project)
@@ -594,6 +609,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             return
         if event.option.id == "S:summary":
             self.show_summary()
+        elif event.option.id == "R:routines":
+            self.show_routines()
         else:
             self.show(self.selected())
 
@@ -602,6 +619,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         kind, key = event.option.id[:2], event.option.id[2:]
         if kind == "S:":
             self.action_summary()
+        elif kind == "R:":
+            self.action_routines()
         elif kind == "p:":
             self.state.collapsed ^= {key}
             self.state.save()
@@ -649,6 +668,39 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             self.said[key] = (line[:157] + "…") if len(line) > 160 else line or None
         return self.said[key]
 
+    def announce_results(self, rs: list) -> None:
+        """A routine run's result, once, when it appears. The first load only takes note."""
+        results = {(rec.cli_id or rec.local_id, rec.result): r.name for r in rs for rec in r.runs if rec.result}
+        if self.results_seen is not None:
+            for (_, text), name in results.items():
+                if (_, text) not in self.results_seen:
+                    self.notify(f"◷ {name}: {text}", timeout=15)
+                    if self.notifications:
+                        self.send_notification(f"{name}: {text}")
+        self.results_seen = set(results)
+
+    def routines_row(self) -> Text:
+        active = [r for r in self.routines if r.status in ("active", "scheduled")]
+        nxt = min((t for r in active if (t := r.next_run())), default=None)
+        info = f"{len(active)} active" if active else "none active"
+        if nxt:
+            info += f" · next {routines.until(nxt)}"
+        return Text.assemble(("◷ ", "bold cyan"), ("Routines", "bold"), (f"  {info}", "dim"))
+
+    def show_routines(self) -> None:
+        self.query_one("#meta", Static).update("")
+        self.query_one("#messages", Static).update(routines_overview(self.routines))
+        self.query_one("#transcript", VerticalScroll).scroll_home(animate=False)
+
+    def action_routines(self) -> None:
+        def done(sid: str | None) -> None:
+            if sid and (s := next((x for x in self.sessions if x.id == sid), None)):
+                self.focus_id = s.id
+                self.expanded.add(s.project)
+                self.filters.discard("waiting")
+                self.rebuild()
+        self.push_screen(Routines(self.routines, {s.id for s in self.sessions}), done)
+
     def summary_row(self) -> Text:
         return Text.assemble(("◎ ", "bold cyan"), ("Summary", "bold"), (f"  {summary.counts(self.summary_page())}", "dim"))
 
@@ -687,6 +739,10 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
 
     def meta(self, s: Session) -> Group:
         lines = [Text(s.title, style="bold")]
+        if (rec := self.desktop.get(s.id)) and rec.routine:
+            name = next((r.name for r in self.routines if r.id == rec.routine), rec.routine)
+            lines.append(Text.assemble(("◷ ", "cyan"), (f"a run of the routine “{name}”", "dim"),
+                                       (f": {rec.result}" if rec.result else "", "")))
         if s.forked_from:
             parent = next((x for x in self.sessions if x.id == s.forked_from), None)
             lines.append(Text(f"⑃ forked from {parent.title if parent else s.forked_from}", style="dim"))

@@ -24,7 +24,7 @@ NASTY = [
     "[link=https://example.com]click[/link] and [red]",
     "Ends with a bracket [",
 ]
-DIALOGS = [("I", "escape"), ("dollar_sign", "escape"), ("L", "escape"), ("t", "escape"), ("W", "escape"),
+DIALOGS = [("U", "escape"), ("I", "escape"), ("dollar_sign", "escape"), ("L", "escape"), ("t", "escape"), ("W", "escape"),
            ("A", "escape"), ("at", "escape"), ("r", "escape"), ("number_sign", "escape"), ("i", "escape"),
            ("R", "escape"), ("P", "escape"), ("n", "escape"), ("d", "escape"), ("X", "escape"), ("B", "escape")]
 SIZES = [(70, 68), (140, 45), (34, 20)]  # the real sidebar, full width, cramped
@@ -53,6 +53,18 @@ def nasty(paths, write, tmp_path):
     paths.state.write_text(json.dumps({
         "pinned": ["s2"], "tags": {"s0": ["waiting-on-[x]"], "s1": ["a"]},
         "notes": {"s0": "note with [/] and [bold]markup"}, "when_idle": {"s2": {"do": "send", "text": "[/] hi"}}}))
+    skill = tmp_path / "skill [x]" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("---\ndescription: watch [/] the [bold]thing\n---\n\nCheck `[red]` and ] / [ **now**.\n")
+    org = paths.desktop / "Claude-3p" / "claude-code-sessions" / "a" / "o"
+    org.mkdir(parents=True)
+    (org / "scheduled-tasks.json").write_text(json.dumps({"scheduledTasks": [
+        {"id": "w", "displayName": NASTY[0], "cronExpression": "0 */6 * * *", "enabled": True, "filePath": str(skill),
+         "cwd": proj, "lastRunAt": "2026-10-01T13:46:49.679Z"},
+        {"id": "x", "displayName": NASTY[3], "cronExpression": "not a cron", "enabled": False, "filePath": "/nope"}]}))
+    (org / "local_1.json").write_text(json.dumps({"sessionId": "local_1", "cliSessionId": "s1", "scheduledTaskId": "w",
+                                                  "createdAt": 1790000000000,
+                                                  "postTurnSummary": {"status_detail": "Found [/] it ] / [ [bold]"}}))
     digests = summary.Digests(paths.summaries)
     return paths, digests
 
@@ -112,6 +124,14 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
             if closer:
                 await pilot.press(closer)
                 await draw(pilot, app)
+
+        # a routine's own screen, and the routines row's preview
+        await pilot.press("U", "enter")
+        await draw(pilot, app)
+        await pilot.press("escape", "escape")
+        await draw(pilot, app)
+        app.show_routines()
+        await draw(pilot, app)
 
         # typing brackets into the filter and the transcript search; the status bar echoes both
         await pilot.press("slash", *"[/] [bold", "escape", "s", *"[red] ] / [", "enter")

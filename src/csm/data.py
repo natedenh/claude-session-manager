@@ -392,6 +392,11 @@ def _alive(pid: int) -> bool:
 class DesktopRecord:
     local_id: str  # the desktop app's id, "local_…"
     archived: bool
+    routine: str | None = None  # the scheduled task this session was a run of
+    result: str | None = None  # the app's summary of where the session ended up
+    result_kind: str | None = None  # e.g. "review_ready", "needs_input"
+    cli_id: str | None = None
+    created: float = 0.0
 
 
 _desktop_cache: dict[str, tuple[float, DesktopRecord | None, str | None]] = {}
@@ -411,7 +416,11 @@ def load_desktop(paths: Paths) -> dict[str, DesktopRecord]:
             cached = _desktop_cache.get(key)
             if not cached or cached[0] != mtime:
                 d = json.loads(f.read_text())
-                rec = DesktopRecord(local_id=d.get("sessionId") or f.stem, archived=d.get("isArchived") is True)
+                summary = d.get("postTurnSummary") if isinstance(d.get("postTurnSummary"), dict) else {}
+                rec = DesktopRecord(local_id=d.get("sessionId") or f.stem, archived=d.get("isArchived") is True,
+                                    routine=d.get("scheduledTaskId") or None, result=summary.get("status_detail") or None,
+                                    result_kind=summary.get("status_category") or None, cli_id=d.get("cliSessionId"),
+                                    created=(d.get("createdAt") or 0) / 1000)
                 cached = _desktop_cache[key] = (mtime, rec, d.get("cliSessionId"))
         except (OSError, ValueError, AttributeError):
             continue
