@@ -2,18 +2,32 @@
 
 `csm` is a terminal UI for Claude Code sessions: the desktop app's sidebar, plus search, filters, and resume.
 
+![Sessions grouped by project, with a running session's preview](docs/screenshots/sessions.svg)
+
+An independent project, not made by or affiliated with Anthropic. It reads Claude Code's own files, which aren't a public API, so a Claude Code update can break something until csm catches up.
+
 It lists every session in `~/.claude/projects`, grouped by project with the most recent activity first. A preview pane shows the session's details and its last few turns, rendered as Markdown. While a transcript search is active, the turns are shown as plain text so the matches can be highlighted.
 
 When tmux is installed, `csm` works like the desktop app's window: the list is a sidebar on the left and the session you open runs on the right. Opening another session swaps it in. The previous one keeps running out of sight, and switching back to it is instant. `ctrl+\` moves focus between the sidebar and the session, and clicking either side works too. A session that's already open in another Ghostty tab or in the Claude desktop app is shown there instead of being resumed twice.
 
 ## Install
 
+You need [Claude Code](https://code.claude.com) and [uv](https://docs.astral.sh/uv/) (which brings its own Python 3.11+).
+
 ```sh
-uv tool install --editable .
+brew install tmux          # for the sidebar beside your sessions; recommended
+uv tool install git+https://github.com/natedenh/claude-session-manager
 csm
 ```
 
-Or run it without installing: `uv run csm`. For the side-by-side mode, `brew install tmux`.
+To hack on it, clone the repo and run `uv tool install --editable .` in it, so `csm` runs your checkout. Or run it without installing: `uv run csm`.
+
+**Platforms.** csm is built on macOS. The core (the list, search, the sidebar in tmux, stats, recaps) runs anywhere tmux does, and the tests run on Linux in CI. The macOS-only parts are opening sessions in Ghostty tabs (`o`), handing off to the Claude desktop app (`D`) and following macOS light or dark appearance. Elsewhere those are skipped or fall back. Ghostty is optional on macOS too.
+
+**Optional extras:**
+- `gh`, logged in, colors each PR by its status.
+- `csm hooks install` makes the waiting and permission marks exact (see Hooks below).
+- The Summary page and `B` (continue fresh) call Claude the same way Claude Code does (see below). The rest of csm works without them.
 
 `csm --archived` starts with archived sessions shown. Colors come from the terminal, and its background shows through. The default theme is `ansi-light` or `ansi-dark`, following macOS appearance. Override it with `--theme <name>` or `CSM_THEME`; any Textual theme name works, e.g. `textual-dark` for csm's own colors. A live session that finishes its turn is marked `◆` (bold) until you open it, and csm sends a desktop notification (OSC 9, which Ghostty shows as a macOS notification; not for the session shown beside the list). `csm --no-notify` turns the notifications off. `csm --no-tmux` skips tmux. Enter then resumes the session in this terminal, and you return to the list when claude exits. Add `--once` to exit instead.
 
@@ -85,9 +99,17 @@ Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree
 
 ## Summary
 
+![The Summary page: what needs you, decisions, finished work, what's running](docs/screenshots/summary.svg)
+
 The `◎ Summary` row at the top of the list (or `S` from anywhere) covers the last 48 hours across all sessions: **Needs you** (the question each waiting session ended on, and permission requests), **Decisions**, **Finished** work, and what's **Still running**. In the summary screen, `enter` opens the session an item came from.
 
 Each recently active session that has settled (idle, unchanged for a minute) is summarized by Claude Haiku 4.5 from its last 16 turns, one session at a time in the background, and cached in `~/.cache/csm/summaries.json` until its transcript changes. csm calls Claude the way Claude Code is configured to: when `~/.claude/settings.json` sets `CLAUDE_CODE_USE_BEDROCK`, it uses Bedrock with that file's `AWS_PROFILE`, `AWS_REGION` and `ANTHROPIC_DEFAULT_HAIKU_MODEL`; otherwise the Anthropic API. `CSM_SUMMARY_MODEL` overrides the model. If a call fails (for example an expired SSO login), the page says so and csm retries after 5 minutes. Without summaries, "Needs you" still works from each session's last message.
+
+## Stats
+
+`I` shows Claude time, sessions, cost and lines added for today, this week and last week, your streak, the last 14 days, the busiest projects, cost by week, when in the day you work, your most-used skills, and how you use csm itself.
+
+![The stats screen](docs/screenshots/stats.svg)
 
 ## PR status
 
@@ -118,17 +140,26 @@ It shows the changes and asks first (`--yes` skips the question), leaves your ot
 
 The hook writes `~/.local/state/csm/status/<session id>.json` (removed at session end) and prints nothing. With it, a session asking for permission gets a red `?` (the preview shows what it asked for, the status bar says "N need permission", `!` includes it, and a notification says "<title> needs permission"), and a finished turn is marked `◆` immediately. Opening the session clears the mark. Without hook files csm behaves as before.
 
-## Data
+## What it reads, writes and sends
 
-- **Sessions:** read from `~/.claude/projects/*/*.jsonl`. `CLAUDE_CONFIG_DIR` is honored.
-- **Live status:** read from `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
-- **Parse cache:** `~/.cache/csm/index.json`, keyed on file mtime and size. The first run parses everything; after that only changed files are re-read.
-- **csm's own state:** archived ids, collapsed projects, pinned sessions, the flat-view setting, and session tags and notes, in `~/.local/state/csm/state.json`.
-- **Claude desktop's archive:** read from `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`, except while it's working, waiting on you or shown beside the list: then it reappears, dimmed, and hides again once it's settled. csm never changes the desktop app's archive.
+**Reads**
+- **Sessions:** `~/.claude/projects/*/*.jsonl`, the transcripts Claude Code writes. `CLAUDE_CONFIG_DIR` is honored.
+- **Live status:** `~/.claude/sessions/<pid>.json`. Entries whose process has exited are ignored.
+- **Claude desktop's archive:** `~/Library/Application Support/Claude*/claude-code-sessions/*/*/local_*.json`. Each record's `isArchived` applies to the transcript named by its `cliSessionId`. A session archived in either place is hidden until you press `a`, except while it's working, waiting on you or shown beside the list: then it reappears, dimmed, and hides again once it's settled. csm never changes the desktop app's archive.
+- **Claude Code's settings**, `~/.claude/settings.json`, only to call Claude the way Claude Code does (provider, AWS profile and region, model names).
 
-- **Exports:** `E` writes `<date> <title>.md` (front matter, then the whole conversation) to `~/Downloads/claude-sessions/`. Change the folder with `--export-dir` or `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
+**Writes, all its own**
+- `~/.cache/csm/`: `index.json` (the parse cache, keyed on file mtime and size, so after the first run only changed files are read), `prs.json` (PR status) and `summaries.json` (Summary digests).
+- `~/.local/state/csm/`: `state.json` (archived, pinned, collapsed, tags, notes, settings), `usage.json` (which features you use, by name and date, for tips), `status/` (from the optional hooks) and `crash.log` (tracebacks, if the sidebar ever crashes; it restarts itself).
+- **Exports** (`E`): `<date> <title>.md` in `~/Downloads/claude-sessions/`, or `--export-dir` / `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
+- **Recaps** (`J`): `<date> Claude recap.md` in `CSM_RECAP_DIR`, else the export folder.
 
-Only rename and delete touch Claude's files. Rename appends one record to the transcript; delete moves the transcript to the Trash.
+**Touches Claude's files only when you ask:** rename (`r`) appends one record to the transcript, as `/rename` does; delete (`d`) moves the transcript to the Trash; `csm hooks install` edits `settings.json` after showing you the change and backing it up.
+
+**Sends**
+- **To Claude, only for the Summary page and `B`:** the last turns of the sessions being summarized or briefed, through your own Claude Code provider and credentials. Nothing else leaves your machine.
+- **To GitHub, through `gh`:** PR URLs from your sessions, to look up their status.
+- No telemetry. The usage log stays on disk and is only read by csm's tips.
 
 Sessions are grouped by the directory they were launched in, or the directory they were relocated to. Worktrees fold into their repo. A `cd` during the session doesn't regroup it.
 
@@ -137,3 +168,9 @@ Sessions are grouped by the directory they were launched in, or the directory th
 ```sh
 uv run pytest
 ```
+
+CI runs the tests on every push. `tests/test_smoke.py` draws every screen, dialog and notification with data built to break rendering; if you add a screen, add it there. `uv run python scripts/screenshots.py` regenerates the screenshots in `docs/screenshots/` from made-up sessions.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

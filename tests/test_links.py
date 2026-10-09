@@ -12,7 +12,7 @@ def test_editor_fallback_order(tmp_path, monkeypatch):
     bin_.mkdir()
     monkeypatch.setenv("PATH", str(bin_))
     monkeypatch.delenv("CSM_EDITOR", raising=False)
-    assert links.editor_argv("/p") == ["open", "/p"]
+    assert links.editor_argv("/p") == [links.OPENER, "/p"]
     (bin_ / "cursor").write_text("")
     (bin_ / "cursor").chmod(0o755)
     assert links.editor_argv("/p") == ["cursor", "/p"]
@@ -36,7 +36,7 @@ async def test_g_opens_pr_or_notifies(paths, write, tmp_path, launched):
         assert launched == []
         await pilot.press("j", "g")
         assert app.selected().id == "with"
-    assert launched == [["open", "https://example.com/pr/7"]]
+    assert launched == [[links.OPENER, "https://example.com/pr/7"]]
 
 
 async def test_dot_opens_project_dir(paths, write, tmp_path, launched, monkeypatch):
@@ -70,7 +70,7 @@ async def test_D_opens_desktop_record(sessions, launched):
     async with app.run_test() as pilot:
         await settle(pilot)
         await pilot.press("D")
-    assert launched == [["open", "claude://code/continue?session=local_abc-123"]]
+    assert launched == [[links.OPENER, "claude://code/continue?session=local_abc-123"]]
 
 
 async def test_D_rejects_unknown_and_malformed(sessions, launched):

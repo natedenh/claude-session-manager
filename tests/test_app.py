@@ -7,7 +7,7 @@ import pytest
 from textual.worker import WorkerCancelled
 from conftest import assistant, rec, user
 
-from csm import data
+from csm import data, links
 from csm.app import CSM
 from csm.widgets import SessionList
 
@@ -264,7 +264,7 @@ async def test_live_desktop_session_opens_in_desktop_app(sessions, launched):
         await pilot.press("enter")
         await settle(pilot)
         assert len(app.screen_stack) == 1  # no confirm dialog
-    assert launched == [["open", "claude://code/continue?session=local_5080e996-675e"]]
+    assert launched == [[links.OPENER, "claude://code/continue?session=local_5080e996-675e"]]
     assert app.return_value is None
 
 
@@ -909,3 +909,13 @@ async def test_worker_crash_logs_the_workers_own_error(sessions, monkeypatch):
     except Exception:
         pass
     assert "RuntimeError: preview worker blew up" in app.crash_log.read_text()
+
+
+def test_theme_falls_back_without_macos_defaults(monkeypatch):
+    from csm import app as appmod
+    monkeypatch.delenv("CSM_THEME", raising=False)
+
+    def missing(*a, **k):
+        raise FileNotFoundError("defaults")
+    monkeypatch.setattr(appmod.subprocess, "run", missing)
+    assert appmod.default_theme() == "ansi-dark"

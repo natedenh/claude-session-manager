@@ -58,7 +58,10 @@ def default_theme() -> str:
     """Match the terminal: its background shows through, so pick light or dark from macOS."""
     if theme := os.environ.get("CSM_THEME"):
         return theme
-    r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
+    try:  # macOS only; elsewhere, dark
+        r = subprocess.run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
+    except OSError:
+        return "ansi-dark"
     return "ansi-dark" if r.stdout.strip() == "Dark" else "ansi-light"
 
 class CSM(AttentionMixin, HostingMixin, App[Session | None]):
@@ -891,7 +894,10 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         if digests.error:
             note += " (summaries unavailable, so it uses each session's last message)"
         self.call_from_thread(self.notify, note, timeout=5)
-        subprocess.run(["open", str(path)], check=False)
+        try:
+            subprocess.run([links.OPENER, str(path)], check=False)
+        except OSError:
+            pass  # written; it just can't be opened here
 
     def action_loadout(self) -> None:
         if (s := self.selected()) is not None:

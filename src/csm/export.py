@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -121,7 +122,10 @@ def reveal(files: list[Path]) -> None:
     """Show the exported file in Finder (or the folder, for several)."""
     if not files:
         return
-    cmd = ["open", "-R", str(files[0])] if len(files) == 1 else ["open", str(files[0].parent)]
+    if sys.platform == "darwin":
+        cmd = ["open", "-R", str(files[0])] if len(files) == 1 else ["open", str(files[0].parent)]
+    else:  # no "reveal" elsewhere: open the folder
+        cmd = ["xdg-open", str(files[0].parent)]
     try:
         subprocess.run(cmd, check=False)
     except OSError:

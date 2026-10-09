@@ -5,6 +5,9 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
+
+OPENER = "open" if sys.platform == "darwin" else "xdg-open"  # opens a file, folder or URL with its app
 
 
 def run(argv: list[str]) -> None:
@@ -14,7 +17,7 @@ def run(argv: list[str]) -> None:
 
 
 def open_url(url: str) -> None:
-    run(["open", url])
+    run([OPENER, url])
 
 
 def editor_argv(path: str) -> list[str]:
@@ -24,7 +27,7 @@ def editor_argv(path: str) -> list[str]:
     for name in ("code", "cursor"):
         if shutil.which(name):
             return [name, path]
-    return ["open", path]
+    return [OPENER, path]
 
 
 def open_editor(path: str) -> None:
