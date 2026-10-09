@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 dist/
-*.svg
+*.svg  # Textual screenshots saved while developing
+!docs/screenshots/*.svg  # ...but not the README's
 .claude/worktrees/
