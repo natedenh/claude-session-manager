@@ -1,6 +1,6 @@
-# claude-session-manager
+# Claude Code Session Manager
 
-`csm` is a terminal UI for Claude Code sessions: the desktop app's sidebar, plus search, filters, and resume.
+The desktop app has some great features, but I am more productive in the cli, so I made `csm`: a terminal UI for Claude Code sessions. It has the desktop app's sidebar, plus search, filters, and resume.
 
 ![csm in tmux: the session list on the left, a Claude Code session running beside it](docs/screenshots/sidebar.svg)
 
