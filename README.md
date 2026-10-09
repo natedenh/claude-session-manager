@@ -179,6 +179,10 @@ uv run pytest
 
 CI runs the tests on every push. `tests/test_smoke.py` draws every screen, dialog and notification with data built to break rendering; if you add a screen, add it there. `uv run python scripts/screenshots.py` regenerates the Summary and stats screenshots in `docs/screenshots/` from made-up sessions, and `uv run python scripts/screenshot_tmux.py` the sidebar one: it stages csm on a throwaway tmux server beside a real Claude Code session resuming a made-up transcript (no model is called) and captures both panes.
 
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
