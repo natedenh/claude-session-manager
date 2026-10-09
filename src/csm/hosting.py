@@ -8,7 +8,7 @@ import subprocess
 
 from textual import work
 
-from . import brief, data, desktop, ghostty, launch, worktrees
+from . import brief, data, desktop, ghostty, launch, layout, worktrees
 from .data import Session
 from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, Prompt
 from .fmt import context_fraction, tilde
@@ -28,7 +28,46 @@ class HostingMixin:
         changed = (hosted, shown) != (self.hosted, self.shown_ids)
         self.hosted, self.shown_ids = hosted, shown
         self.shown_id = shown[0] if shown else None
+        if changed and self.restore_done:  # not before a restore has had its chance, or it'd save "nothing open"
+            layout.save(self.layout_path, list(hosted), list(shown))
         return changed
+
+    @property
+    def layout_path(self):
+        return self.paths.state.parent / "layout.json"
+
+    def restore_layout(self) -> None:
+        """After a reboot (csm's tmux server is new, none of its sessions running), reopen the
+        sessions that were open, beside the list where they were. Runs once, on the first load."""
+        self.restore_done = True
+        if not self.host or not getattr(self.host, "own", False) or self.hosted or os.environ.get("CSM_RESTORE") == "0":
+            return
+        saved = layout.load(self.layout_path)
+        by_id = {s.id: s for s in self.sessions}
+        want = [sid for sid in saved["hosted"] if sid in by_id and sid not in self.live
+                and os.path.isdir(by_id[sid].origin or by_id[sid].cwd)]
+        if not saved["hosted"]:
+            return
+        shown = [sid for sid in saved["shown"] if sid in want]
+        try:
+            for sid in [x for x in want if x not in shown]:  # the ones that were running out of sight
+                s = by_id[sid]
+                self.host.start(sid, s.origin or s.cwd, launch.resume(sid, s.origin or s.cwd, s.title).command, s.title[:40])
+            for i, sid in enumerate(shown):
+                s = by_id[sid]
+                (self.host.show if i == 0 else self.host.show_also)(
+                    sid, s.origin or s.cwd, launch.resume(sid, s.origin or s.cwd, s.title).command, s.title[:40])
+            if shown and hasattr(self.host, "run"):
+                self.host.run("select-pane", "-t", self.host.me)  # stay in the list
+        except (subprocess.CalledProcessError, OSError) as e:
+            self.notify(f"Couldn't reopen every session: {e}", severity="warning")
+        self.poll_host()
+        self.rebuild()
+        if want:
+            missed = len(saved["hosted"]) - len(want)
+            self.notify(f"Reopened the {len(want)} session{'s' * (len(want) != 1)} you had open"
+                        + (f"; {missed} couldn't be (running elsewhere, or their folder or transcript is gone)" if missed else ""),
+                        timeout=8)
 
 
     # ---- list ------------------------------------------------------------

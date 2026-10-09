@@ -156,6 +156,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.last_action: tuple[str, float] = ("", 0.0)
         self.archived_at: list[float] = []
         self.via_tab = False
+        self.restore_done = host is None  # until the first load has offered to reopen the last layout
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
         self.routines: list[routines.Routine] = []
@@ -273,8 +274,11 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.track(live)
         self.sessions, self.live, self.desktop = sessions, live, desktop
         if changed or not self.loaded:
+            first = not self.loaded
             self.loaded = True
             self.rebuild()
+            if first and self.host:
+                self.restore_layout()
             self.refresh_prs()
             self.refresh_summaries()
         self.refresh_git()
@@ -1188,6 +1192,8 @@ def main() -> None:
     ap.add_argument("--once", action="store_true", help="with --no-tmux, exit after resuming")
     ap.add_argument("--archived", action="store_true", help="start with archived sessions shown")
     ap.add_argument("--no-notify", action="store_true", help="don't send a desktop notification when a session is waiting")
+    ap.add_argument("--no-restore", action="store_true",
+                    help="after a reboot, don't reopen the sessions that were open in csm's panes. Also CSM_RESTORE=0.")
     ap.add_argument("--stuck-minutes", help=f"flag a busy session with no output for this long; default {STUCK_MINUTES}, "
                                             "0 turns it off. Also CSM_STUCK_MINUTES.")
     ap.add_argument("--export-dir", help="where E writes Markdown exports; default ~/Downloads/claude-sessions. "
@@ -1198,6 +1204,8 @@ def main() -> None:
     args = ap.parse_args()
     if args.stuck_minutes:
         os.environ["CSM_STUCK_MINUTES"] = args.stuck_minutes
+    if args.no_restore:
+        os.environ["CSM_RESTORE"] = "0"
     if args.export_dir:
         os.environ["CSM_EXPORT_DIR"] = os.path.abspath(os.path.expanduser(args.export_dir))
     if args.sidebar or (os.environ.get("TMUX") and not args.no_tmux):
@@ -1222,6 +1230,7 @@ def main() -> None:
         extra = (["--archived"] if args.archived else []) + (["--no-notify"] if args.no_notify else []) + (["--theme", args.theme] if args.theme else [])
         extra += ["--export-dir", os.environ["CSM_EXPORT_DIR"]] if args.export_dir else []
         extra += ["--stuck-minutes", args.stuck_minutes] if args.stuck_minutes else []
+        extra += ["--no-restore"] if args.no_restore else []
         tmux.launch(extra)  # does not return
     focus = None
     while True:

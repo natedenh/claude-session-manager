@@ -35,7 +35,7 @@ To hack on it, clone the repo and run `uv tool install --editable .` in it, so `
 
 `csm` starts or reattaches to a private tmux server (`tmux -L csm`) that uses this package's `src/csm/tmux.conf`. Your own tmux config and sessions are untouched. That config sets no prefix key, because Claude Code uses `ctrl+b`. It turns on the mouse and hides the status bar.
 
-`q` detaches. Your sessions keep running, and closing the Ghostty window does the same thing. Running `csm` again brings everything back. To stop a session's claude process, press `c` on it in the list, or exit claude as usual. `tmux -L csm kill-server` stops everything.
+`q` detaches. Your sessions keep running, and closing the Ghostty window does the same thing. Running `csm` again brings everything back. A reboot (or `tmux -L csm kill-server`) stops the sessions, but csm remembers which were open: the next `csm` reopens them, the ones that were beside the list back beside it in the same order, the rest out of sight. Sessions that are running elsewhere by then, or whose folder or transcript is gone, are skipped. `--no-restore` or `CSM_RESTORE=0` turns this off. To stop a session's claude process, press `c` on it in the list, or exit claude as usual. `tmux -L csm kill-server` stops everything.
 
 Inside your own tmux, `csm` uses the current window instead, and `q` quits rather than detaching your client.
 
