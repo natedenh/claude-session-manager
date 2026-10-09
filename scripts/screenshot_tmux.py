@@ -28,6 +28,7 @@ from rich.terminal_theme import TerminalTheme  # noqa: E402
 from rich.text import Text  # noqa: E402
 
 SOCKET = "csm-screenshot"
+SCRUB = [" · Amazon Bedrock"]  # Claude Code's header names the provider it borrowed from your settings
 WIDTH, HEIGHT = 200, 46
 CONF = demo.ROOT / "src" / "csm" / "tmux.conf"
 # A light terminal palette, close to what light themes in Ghostty and GitHub use.
@@ -111,6 +112,9 @@ def capture() -> Text:
             if n:  # tmux's divider, in the active pane's color
                 out.append("┃", style="#ff8700" if active else "#d0d7de")
             cell = Text.from_ansi(lines[y], end="")
+            for word in SCRUB:
+                if (at := cell.plain.find(word)) != -1:
+                    cell = cell[:at] + cell[at + len(word):]
             cell.truncate(width, pad=True)
             out.append(cell)
         out.append("\n")
