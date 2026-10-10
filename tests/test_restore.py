@@ -65,3 +65,4 @@ async def test_a_running_server_is_left_alone(sessions):  # noqa: F811
     async with app.run_test() as pilot:
         await settle(pilot)
         assert host.calls == []
+        assert saved(sessions) == {"hosted": ["a1"], "shown": []}  # what's running now is remembered straight away

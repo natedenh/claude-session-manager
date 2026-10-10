@@ -40,7 +40,10 @@ class HostingMixin:
         """After a reboot (csm's tmux server is new, none of its sessions running), reopen the
         sessions that were open, beside the list where they were. Runs once, on the first load."""
         self.restore_done = True
-        if not self.host or not getattr(self.host, "own", False) or self.hosted or os.environ.get("CSM_RESTORE") == "0":
+        if self.host and self.hosted:  # csm restarted while its sessions kept running: just remember them
+            layout.save(self.layout_path, list(self.hosted), list(self.shown_ids))
+            return
+        if not self.host or not getattr(self.host, "own", False) or os.environ.get("CSM_RESTORE") == "0":
             return
         saved = layout.load(self.layout_path)
         by_id = {s.id: s for s in self.sessions}
