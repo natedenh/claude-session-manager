@@ -72,6 +72,12 @@ Project headers show `±3` uncommitted files, `↑2` commits to push and `↓1` 
 
 Icons: `⇄` PR linked (colored by PR status, see below), magenta `⑂` worktree, `○` other. A dot in front means the session is running: green is idle, yellow is busy (and pulses slowly while it works). `»` marks every session shown beside the list. `◆` means it finished a turn and is waiting for you; a red `?` means it needs permission (needs the hooks below). Both are followed by how long it has waited (`◆ 12m`); the status bar shows the longest wait. An amber `⧗` means it looks stuck: busy, but its transcript hasn't changed for 10 minutes (`--stuck-minutes` or `CSM_STUCK_MINUTES`; `0` turns it off). You get one notification each time a session goes quiet like that. A long build or test run looks the same, so it's only a marker. Opening a session that's running somewhere else switches to it where it's running. A Ghostty tab is found by its title and directory. A Claude desktop session is opened with `claude://code/continue?session=<id>`, which only works while the session is open in the app, because that's the only time its id is on disk. If neither applies, csm asks before resuming it a second time.
 
+## Teams
+
+A session that hands work to subagents shows them under its row. Running agents are listed one by one, `↳ ● sonnet code-search · Map the checkout code  2m`, coloured by model; finished ones fold into one row (`↳ ▸ 3 agents 2 sonnet, 1 haiku`), and enter on it lists them. Highlighting an agent previews it: its task, type, model, how long it ran, its share of the session's cost, its worktree if it had one, and its result (the report it handed back, or its last words). Enter opens its whole transcript. Keys that act on a session (archive, pin, and so on) act on the agent's session. The session's own preview lists its team, the status bar counts working agents, and csm notifies you when a background agent finishes.
+
+csm reads agents from `<session>/subagents/agent-*.jsonl` and their `.meta.json` files beside the transcript, and their finish from the session's task notifications. Their tokens count toward the session's activity, models and cost.
+
 ## Summary
 
 The `◎ Summary` row at the top of the list (or `S` from anywhere) covers the last 48 hours across all sessions: **Needs you** (the question each waiting session ended on, and permission requests), **Decisions**, **Finished** work, and what's **Still running**. In the summary screen, `enter` opens the session an item came from.

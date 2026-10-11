@@ -27,6 +27,7 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
 
+from . import agents as team
 from . import autoarchive, data, desktop, export, hooks, links, models, prs, routines, recap, summary, tips, usage, tmux, worktrees
 from .activity import STYLES as WAVES, Activity
 from .attention import AttentionMixin
@@ -37,7 +38,7 @@ from .fmt import (ago, context_flag, context_line, git_flags, last_days, pr_styl
                   sparkline, tilde, waited)
 from .routines_view import Routines, overview as routines_overview
 from .widgets import SessionList
-from .stats import Stats
+from .stats import Stats, rate as stats_rate
 from .data import LiveSession, Message, Session, normalize_tags
 from .launch import Pending
 from .viewer import Viewer
@@ -64,6 +65,23 @@ def default_theme() -> str:
     except OSError:
         return "ansi-dark"
     return "ansi-dark" if r.stdout.strip() == "Dark" else "ansi-light"
+
+MODEL_STYLE = {"opus": "#d97757", "sonnet": "#3b82f6", "haiku": "green", "fable": "magenta"}
+
+
+def team_mark(a) -> tuple[str, str]:
+    return {"running": ("●", "warn"), "done": ("✓", "green"), "failed": ("✗", "red")}.get(a.status, ("◌", "dim"))
+
+
+def team_age(a) -> str:
+    """How long it ran (or has been running)."""
+    secs = (time.time() if a.status == "running" else a.last) - a.started if a.started else 0
+    return f"{int(secs // 3600)}h {int(secs % 3600 // 60)}m" if secs >= 3600 else f"{max(1, int(secs // 60))}m" if secs >= 60 else f"{int(secs)}s"
+
+
+def fmt_money(x: float) -> str:
+    return f"${x:,.2f}"
+
 
 class CSM(AttentionMixin, HostingMixin, App[Session | None]):
     TITLE = "Claude sessions"
@@ -160,6 +178,11 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.theme_name = theme or default_theme()
         self.desktop: dict[str, data.DesktopRecord] = {}
         self.routines: list[routines.Routine] = []
+        self.agents: dict[str, list[team.Agent]] = {}  # session id -> its subagents, oldest first
+        self.agent_cache = team.Cache()
+        self.expanded_teams: set[str] = set()  # sessions whose finished agents are listed one by one
+        self.preview_key: str | None = None  # what the preview pane is showing, so a late load can't overwrite it
+        self.per_weight = 0.0
         self.results_seen: set[tuple[str, str]] | None = None  # routine run results already announced
         self.host = host  # set when running as the sidebar of a tmux window
         self.hosted: dict[str, str] = {}  # session id -> tmux pane, for sessions on our server
@@ -235,6 +258,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.load()
         self.set_interval(2, self.poll_live)
         self.set_interval(20, self.load)
+        self.set_interval(5, self.refresh_agents)
         self.set_interval(60, self.refresh_prs)
         self.set_interval(120, self.refresh_summaries)
 
@@ -271,6 +295,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
                    [(r.id, r.enabled, r.last_run, len(r.runs)) for r in rs] != [(r.id, r.enabled, r.last_run, len(r.runs)) for r in self.routines]))
         if rs is not None:
             self.routines = rs
+        self.per_weight = stats_rate(sessions)
         self.track(live)
         self.sessions, self.live, self.desktop = sessions, live, desktop
         if changed or not self.loaded:
@@ -453,6 +478,29 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         wait = (f"{waited(t)} ", dot[1]) if (t := self.attention().get(s.id) or self.stuck.get(s.id)) else ""
         return Text.assemble(mark, dot, icon, wait, (s.title, title), fork, bg, then, context_flag(s), tags, project)
 
+    def team_rows(self, s: Session) -> list[Option]:
+        """A session's agents under it: running ones always, finished ones folded into one row
+        until enter on it lists them."""
+        ags = self.agents.get(s.id)
+        if not ags:
+            return []
+        running = [a for a in ags if a.status == "running"]
+        rest = [a for a in ags if a.status != "running"]
+        rows = [Option(self.agent_row(a), id=f"a:{s.id}:{a.id}") for a in running]
+        if rest and s.id in self.expanded_teams:
+            rows += [Option(self.agent_row(a), id=f"a:{s.id}:{a.id}") for a in rest]
+        if rest:
+            mix = Counter(a.model_label for a in rest)
+            fold = "▾" if s.id in self.expanded_teams else "▸"
+            rows.append(Option(Text.assemble(("    ↳ ", "dim"), (f"{fold} {len(rest)} agent{'s' * (len(rest) != 1)} ", "dim"),
+                                             (", ".join(f"{n} {m}" for m, n in mix.most_common()), "dim")),
+                               id=f"A:{s.id}"))
+        return rows
+
+    def agent_row(self, a: team.Agent) -> Text:
+        return Text.assemble(("    ↳ ", "dim"), team_mark(a), " ", (f"{a.model_label} ", MODEL_STYLE.get(a.model_label, "")),
+                             (f"{a.type} · ", "dim"), a.task, (f"  {team_age(a)}", "dim"))
+
     def fork_tag(self, s: Session) -> Text:
         """Forks copy their original's title; when both are listed, say which is which."""
         if s.title in self.same_name:
@@ -552,6 +600,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
                 self.by_id[s.id] = s
                 self.row_args[s.id] = with_project
                 options.append(Option(self.row(s, with_project), id=f"s:{s.id}"))
+                options += self.team_rows(s)
             if len(shown) < len(sessions) and not collapsed:
                 options.append(Option(Text(f"    … {len(sessions) - len(shown)} more", style="dim italic"),
                                       id=f"m:{project}"))
@@ -587,6 +636,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             parts.append(f"{len(self.permission)} need permission")
         if self.stuck:
             parts.append(f"{len(self.stuck)} stuck")
+        if working := sum(a.status == "running" for ags in self.agents.values() for a in ags):
+            parts.append(f"{working} agent{'s' * (working != 1)} working")
         if self.waiting:
             parts.append(f"{len(self.waiting)} waiting (longest {waited(min(self.waiting.values()))})")
         if only := sorted(self.filters - {"archived"}):
@@ -605,8 +656,54 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.query_one("#status", Static).update(Text.assemble("  ·  ".join(parts), ("    ? help", "dim")))
 
     def selected(self) -> Session | None:
+        """The highlighted session; on an agent's row, the session it works for."""
         opt = self.query_one(SessionList).highlighted_option
-        return self.by_id.get(opt.id[2:]) if opt and opt.id and opt.id.startswith("s:") else None
+        if not opt or not opt.id:
+            return None
+        if opt.id.startswith("s:"):
+            return self.by_id.get(opt.id[2:])
+        if opt.id[:2] in ("a:", "A:"):
+            return self.by_id.get(opt.id[2:].split(":")[0])
+        return None
+
+    def selected_agent(self) -> tuple[Session, team.Agent] | None:
+        opt = self.query_one(SessionList).highlighted_option
+        if not opt or not opt.id or not opt.id.startswith("a:"):
+            return None
+        sid, aid = opt.id[2:].split(":", 1)
+        s = self.by_id.get(sid)
+        a = next((x for x in self.agents.get(sid, []) if x.id == aid), None)
+        return (s, a) if s and a else None
+
+    def agent_session(self, s: Session, a: team.Agent) -> Session:
+        """An agent's transcript dressed as a session, for the preview and the viewer."""
+        return Session(id=a.id, path=a.path, title=a.task, project=s.project, cwd=a.worktree or s.cwd)
+
+    @work(thread=True, exclusive=True, group="agents")
+    def refresh_agents(self) -> None:
+        """Re-read the agents of sessions that have them; unchanged files come from the cache."""
+        found = {}
+        for s in list(self.sessions):
+            if (Path(s.path).parent / s.id / "subagents").is_dir():
+                if got := self.agent_cache.get(s, s.id in self.live):
+                    found[s.id] = got
+        self.call_from_thread(self.set_agents, found)
+
+    def set_agents(self, found: dict[str, list[team.Agent]]) -> None:
+        if self.closing():
+            return
+        before = {(sid, a.id): a.status for sid, ags in self.agents.items() for a in ags}
+        for sid, ags in found.items():
+            for a in ags:  # one that was running when csm last looked and has finished since
+                if before.get((sid, a.id)) == "running" and a.status in ("done", "failed"):
+                    title = self.by_id[sid].title if sid in self.by_id else sid[:8]
+                    word = "finished" if a.status == "done" else "failed"
+                    self.notify(f"{title}: agent “{a.task}” {word}", timeout=6)
+                    if self.notifications and sid != self.shown_id:
+                        self.send_notification(f"{title}: agent “{a.task}” {word}")
+        if found != self.agents:
+            self.agents = found
+            self.rebuild()
 
     @on(OptionList.OptionHighlighted)
     def highlighted(self, event: OptionList.OptionHighlighted) -> None:
@@ -616,6 +713,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             self.show_summary()
         elif event.option.id == "R:routines":
             self.show_routines()
+        elif got := self.selected_agent():
+            self.show_agent(*got)
         else:
             self.show(self.selected())
 
@@ -624,6 +723,11 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         kind, key = event.option.id[:2], event.option.id[2:]
         if kind == "S:":
             self.action_summary()
+        elif kind == "A:":
+            self.expanded_teams ^= {key}
+            self.rebuild()
+        elif kind == "a:" and (got := self.selected_agent()):
+            self.push_screen(Viewer(self.agent_session(*got), self.current_theme.dark))
         elif kind == "R:":
             self.action_routines()
         elif kind == "p:":
@@ -740,7 +844,27 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
             self.query_one("#messages", Static).update("")
             return
         meta.update(self.meta(s))
+        self.preview_key = s.id
         self.load_preview(s)
+
+    def show_agent(self, s: Session, a: team.Agent) -> None:
+        self.query_one("#meta", Static).update(self.agent_meta(s, a))
+        self.preview_key = a.id
+        self.load_preview(self.agent_session(s, a))
+
+    def agent_meta(self, s: Session, a: team.Agent) -> Group:
+        lines = [Text(a.task, style="bold"),
+                 Text.assemble((f"{a.type} · {models.label(a.model) or a.model_label}", "dim"),
+                               (f" · {team_age(a)}", "dim"), (f" · {fmt_money(a.weight * self.per_weight)}", "dim")
+                               if self.per_weight and a.weight else ""),
+                 Text.assemble(team_mark(a), f" {a.status}", (f" · agent of “{s.title}”", "dim"))]
+        if a.worktree:
+            lines.append(Text(f"worktree {tilde(a.worktree)}", style="dim"))
+        if a.result:
+            lines.append(Text(a.result[:300] + ("…" if len(a.result) > 300 else "")))
+        lines.append(Text("enter: the whole transcript", style="dim"))
+        lines.append(Rule(style="dim"))
+        return Group(*lines)
 
     def meta(self, s: Session) -> Group:
         lines = [Text(s.title, style="bold")]
@@ -785,6 +909,16 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         elif s.id in self.stuck:
             lines.append(Text(f"⧗ looks stuck: busy, but nothing written for {waited(self.stuck[s.id])}"
                               " (or a long command is running)", style="warn"))
+        if ags := self.agents.get(s.id):
+            mix = Counter(a.model_label for a in ags)
+            lines.append(Text.assemble(("Team ", "bold"), (f"{len(ags)} agent{'s' * (len(ags) != 1)}: "
+                                                         + ", ".join(f"{n} {m}" for m, n in mix.most_common()), "dim")))
+            for a in ags[-8:]:
+                lines.append(Text.assemble("  ", team_mark(a), " ", (f"{a.model_label:<7}", MODEL_STYLE.get(a.model_label, "")),
+                                           a.task, (f"  {team_age(a)}", "dim"),
+                                           (f"  {fmt_money(a.weight * self.per_weight)}", "dim") if self.per_weight and a.weight else ""))
+            if len(ags) > 8:
+                lines.append(Text(f"  … and {len(ags) - 8} earlier", style="dim"))
         if s.pr_url:
             st = self.pr_status.get(s.pr_url)
             lines.append(Text.assemble(("⇄ ", pr_style(st)), (f"#{s.pr_number} ", "bold"),
@@ -820,7 +954,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
     def show_messages(self, s: Session, messages: list[Message]) -> None:
         if self.closing():
             return
-        if (cur := self.selected()) is None or cur.id != s.id:
+        if self.preview_key != s.id:  # the cursor has moved on since this was asked for
             return
         # Markdown normally; plain text while a transcript search is active, so matches can be highlighted.
         searching = bool(self.search_query and self.hits is not None)

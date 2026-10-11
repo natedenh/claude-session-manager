@@ -24,6 +24,7 @@ csm is built on macOS; the core runs anywhere tmux does. Optional: a logged-in `
 - **Sessions run beside the list**, like the desktop app's window. Opening another swaps it in; the last one keeps running out of sight. Close the terminal and they keep running; after a reboot, `csm` reopens the ones you had open.
 - **What needs you, first.** A session that finished its turn is marked `◆` with how long it has waited, one asking permission gets a red `?`, and one that's gone quiet mid-task gets `⧗`. `tab` opens whichever has waited longest; `ctrl+]` does it from inside a session.
 - **Start work without stopping.** `n` starts a new session on a first message while you stay in the list; `B` continues a session whose context is nearly full in a fresh one, from a brief of where it stands.
+- **Teams of subagents under their session**: what each was asked, on which model, how long it ran, what it cost and what it found, with the running ones always in view.
 - **A summary of the last 48 hours:** what needs you, what was decided, what got done.
 
 ![The Summary page: what needs you, decisions, finished work, what's running](docs/screenshots/summary.svg)

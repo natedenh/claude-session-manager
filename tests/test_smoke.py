@@ -65,6 +65,18 @@ def nasty(paths, write, tmp_path):
     (org / "local_1.json").write_text(json.dumps({"sessionId": "local_1", "cliSessionId": "s1", "scheduledTaskId": "w",
                                                   "createdAt": 1790000000000,
                                                   "postTurnSummary": {"status_detail": "Found [/] it ] / [ [bold]"}}))
+    # a team under s0: a finished agent and a running one, with brackets in their tasks and results
+    main = next(paths.projects.glob("*/s0.jsonl"))
+    sub = main.parent / "s0" / "subagents"
+    sub.mkdir(parents=True)
+    for aid, task, model in (("g1", "[WIP] map [/] the code", "claude-sonnet-5-5"), ("g2", "run ] / [ tests", "claude-haiku-5-5")):
+        (sub / f"agent-{aid}.meta.json").write_text(json.dumps({"agentType": "[x]", "description": task}))
+        (sub / f"agent-{aid}.jsonl").write_text(rec(type="assistant", isSidechain=True, timestamp="2026-10-10T15:00:00Z",
+            message={"model": model, "id": aid, "content": [{"type": "text", "text": "**[bold]** done [/]"}],
+                     "usage": {"output_tokens": 50}}) + "\n")
+    with open(main, "a") as f:
+        f.write(rec(type="queue-operation", content="<task-notification><task-id>g1</task-id><status>completed</status>"
+                                                    "<result>Found [/] it ] / [</result></task-notification>") + "\n")
     digests = summary.Digests(paths.summaries)
     return paths, digests
 
@@ -99,6 +111,16 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
         app.waiting["s1"] = time.time() - 900
         app.rebuild()
         await draw(pilot, app)
+        app.refresh_agents()  # the team rows, folded and unfolded, and an agent's own preview
+        await draw(pilot, app)
+        app.expanded_teams.add("s0")
+        app.rebuild()
+        await draw(pilot, app)
+        lst = app.query_one("SessionList")
+        for i, o in enumerate(lst.options):
+            if o.id and o.id.startswith("a:"):
+                lst.highlighted = i
+                await draw(pilot, app)
 
         # every row, in each layout
         for keys in (["e"], ["v"], ["v"], ["a"], ["a"], ["exclamation_mark"], ["exclamation_mark"]):

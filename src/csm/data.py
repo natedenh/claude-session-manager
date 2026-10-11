@@ -526,7 +526,9 @@ def viewers(live: dict[str, LiveSession]) -> dict[str, str]:
 
 
 def transcript(path: str | Path, limit: int = 30, tail_bytes: int = 4_000_000) -> list[Message]:
-    """The last `limit` conversation turns, read from the tail of the file."""
+    """The last `limit` conversation turns, read from the tail of the file. A subagent's own file
+    is all side conversation, so there it isn't skipped."""
+    own_side = "/subagents/" in str(path)
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
         size = f.tell()
@@ -543,7 +545,7 @@ def transcript(path: str | Path, limit: int = 30, tail_bytes: int = 4_000_000) -
         except ValueError:
             continue
         t = d.get("type")
-        if t not in ("user", "assistant") or d.get("isSidechain") or d.get("isMeta"):
+        if t not in ("user", "assistant") or (d.get("isSidechain") and not own_side) or d.get("isMeta"):
             continue
         content = d.get("message", {}).get("content")
         text = message_text(content)
