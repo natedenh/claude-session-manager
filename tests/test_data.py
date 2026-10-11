@@ -315,4 +315,29 @@ def test_models_per_day_come_from_the_message_not_tool_inputs(paths, write, tmp_
               msg("a", "claude-opus-5-5", 100), msg("b", "claude-sonnet-5-5", 40), msg("c", "<synthetic>", 9))
     s = data.parse_session(f)
     day = next(iter(s.day_models))
-    assert s.day_models[day] == {"claude-opus-5-5": 500.0, "claude-sonnet-5-5": 200.0}
+    assert s.day_models[day] == {"claude-opus-5-5": 500.0, "claude-sonnet-5-5": 100.0}  # Sonnet tokens at half price
+
+
+def test_subagent_work_counts_toward_its_session(paths, write, tmp_path):
+    cwd = str(tmp_path)
+
+    def msg(mid, model, ts, out, **kw):
+        return rec(type="assistant", timestamp=ts, message={"model": model, "id": mid, "content": [],
+                   "usage": {"input_tokens": 0, "output_tokens": out}}, **kw)
+    f = write(cwd, "p1", user("plan it", cwd), msg("m1", "claude-opus-5-5", "2026-09-30T15:00:00Z", 100),
+              rec(type="cost-state", totalCostUSD=3.0))
+    sub = f.parent / "p1" / "subagents"
+    sub.mkdir(parents=True)
+    # A Sonnet subagent ran before the cost record: its 200 tokens cost like 100 Opus 5.5 ones.
+    (sub / "agent-a1.jsonl").write_text(msg("s1", "claude-sonnet-5-5", "2026-09-30T14:59:00Z", 200, isSidechain=True,
+                                            agentId="a1") + "\n")
+    s = data.parse_session(f)
+    day = next(iter(s.day_models))
+    assert s.day_models[day] == {"claude-opus-5-5": 500.0, "claude-sonnet-5-5": 500.0}  # 100x5 · 200x5 at half price
+    assert s.day_cost == {day: 3.0} and sum(s.active.values()) == 3  # the prompt, the reply and the subagent minute
+    [cached] = data.load_sessions(paths)
+    assert cached.day_models == s.day_models
+    # Only the subagent's file changes: the cache notices.
+    (sub / "agent-a2.jsonl").write_text(msg("s2", "claude-haiku-5-5", "2026-09-30T15:01:00Z", 1000, isSidechain=True) + "\n")
+    [again] = data.load_sessions(paths)
+    assert "claude-haiku-5-5" in again.day_models[day]

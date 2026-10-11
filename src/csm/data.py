@@ -20,11 +20,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import autoarchive
+from . import autoarchive, models
 
 HOME = Path.home()
 WORKTREE_MARK = "/.claude/worktrees/"
-CACHE_VERSION = 10  # bump whenever parse_session changes
+CACHE_VERSION = 12  # bump whenever parse_session changes
 
 CWD_RE = re.compile(r'"cwd":"((?:[^"\\]|\\.)*)"')
 BRANCH_RE = re.compile(r'"gitBranch":"((?:[^"\\]|\\.)*)"')
@@ -33,6 +33,7 @@ MSG_ID_RE = re.compile(r'"message":\{[^{]*?"id":"([^"]+)"')
 MSG_MODEL_RE = re.compile(r'"message":\{[^{]*?"model":"([^"]+)"')  # the message's own, not a tool input's
 USAGE_RE = {k: re.compile(rf'"{k}":(\d+)') for k in
             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")}
+BASE_PRICE = 4.0  # Opus 5.5's list input price: token weights are in Opus 5.5 tokens
 # Relative price of each kind of token; the same on every current Claude model.
 TOKEN_WEIGHT = {"input_tokens": 1.0, "cache_creation_input_tokens": 1.25, "cache_read_input_tokens": 0.1,
                 "output_tokens": 5.0}
@@ -178,18 +179,71 @@ def _local(minute: str, memo: dict[str, tuple[str, int]]) -> tuple[str, int] | N
     return memo[minute]
 
 
-def _by_day(pending: dict[str, tuple[str, float]]) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for d, w in pending.values():
-        out[d] = out.get(d, 0.0) + w
+def _note_message(line: str, ts: str | None, msgs: dict, memo: dict) -> None:
+    """Record an assistant message's time, model and token weight. Each content block repeats its
+    message's usage, so a message counts once."""
+    if '"usage"' not in line or '"type":"assistant"' not in line or not ts or not (m := MSG_ID_RE.search(line)):
+        return
+    weight = sum(w * int(u.group(1)) for k, w in TOKEN_WEIGHT.items() if (u := USAGE_RE[k].search(line)))
+    if weight and (lt := _local(ts[:16], memo)):
+        mm = MSG_MODEL_RE.search(line)
+        model = mm.group(1) if mm and mm.group(1) != "<synthetic>" else ""
+        # Weighted by the model's price too, so a Sonnet token counts for half an Opus one when
+        # a recorded cost is shared out; unknown models count like Opus 5.5.
+        msgs[m.group(1)] = (ts, lt[0], model, weight * (models.price(model) or BASE_PRICE) / BASE_PRICE)
+
+
+def _subagent_files(path: Path) -> list[Path]:
+    """<project dir>/<session id>/subagents/agent-*.jsonl"""
+    try:
+        return sorted((path.parent / path.stem / "subagents").glob("agent-*.jsonl"))
+    except OSError:
+        return []
+
+
+def subagent_signature(path: Path) -> list:
+    """What the parse cache keys a session's subagent files on: each one's name, mtime and size."""
+    out = []
+    for f in _subagent_files(path):
+        try:
+            st = f.stat()
+            out.append([f.name, st.st_mtime, st.st_size])
+        except OSError:
+            continue
     return out
 
 
-def _models_by_day(by_message: dict[str, tuple[str, str, float]]) -> dict[str, dict[str, float]]:
-    out: dict[str, dict[str, float]] = {}
-    for d, model, w in by_message.values():
-        out.setdefault(d, {})[model] = out.setdefault(d, {}).get(model, 0.0) + w
-    return out
+def _spread_costs(msgs: dict, cost_points: list, memo: dict):
+    """Each cost record's growth, spread over the messages between it and the one before by their
+    token weight; messages after the last record aren't priced yet. Only growth counts: a total
+    that drops is a new process (or two writing in turns), and what it adds shows up as growth."""
+    ordered = sorted(msgs.values())
+    day_cost: dict[str, float] = {}
+    day_lines: dict[str, int] = {}
+    priced = 0.0
+    i, prev_cost, prev_lines = 0, 0.0, 0
+    for ts, now_cost, now_lines in cost_points:
+        window = []
+        while i < len(ordered) and ordered[i][0] <= ts:
+            window.append(ordered[i])
+            i += 1
+        grew, added = max(0.0, now_cost - prev_cost), max(0, now_lines - prev_lines)
+        weight = sum(w for *_, w in window)
+        if grew and weight:
+            for _, day, _, w in window:
+                day_cost[day] = day_cost.get(day, 0.0) + grew * w / weight
+            priced += weight
+        elif grew and (lt := _local(ts[:16], memo)):
+            day_cost[lt[0]] = day_cost.get(lt[0], 0.0) + grew
+        if not grew:
+            i -= len(window)  # nothing paid for them yet: the next record covers them
+        if added and (lt := _local(ts[:16], memo)):
+            day_lines[lt[0]] = day_lines.get(lt[0], 0) + added
+        prev_cost, prev_lines = now_cost, now_lines
+    unpriced: dict[str, float] = {}
+    for _, day, _, w in ordered[i:]:
+        unpriced[day] = unpriced.get(day, 0.0) + w
+    return {k: round(v, 4) for k, v in day_cost.items()}, day_lines, unpriced, priced
 
 
 def parse_session(path: Path) -> Session | None:
@@ -200,13 +254,9 @@ def parse_session(path: Path) -> Session | None:
     minutes: set[str] = set()
     memo: dict[str, tuple[str, int]] = {}
     last_ts: str | None = None
-    prev_cost, prev_lines = 0.0, 0
-    day_cost: dict[str, float] = {}
-    day_lines: dict[str, int] = {}
     skills: Counter = Counter()
-    pending: dict[str, tuple[str, float]] = {}  # message id -> (day, token weight), since the last cost record
-    by_message: dict[str, tuple[str, str, float]] = {}  # message id -> (day, model, weight), the whole session
-    priced_weight = 0.0
+    msgs: dict[str, tuple[str, str, str, float]] = {}  # message id -> (timestamp, day, model, token weight)
+    cost_points: list[tuple[str, float, int]] = []  # (time, running cost, running lines added) per cost record
     st = path.stat()
     try:
         with open(path, errors="replace") as f:
@@ -217,13 +267,7 @@ def parse_session(path: Path) -> Session | None:
                         started = last_ts
                     if '"isSidechain":true' not in line:
                         minutes.add(last_ts[:16])
-                if '"usage"' in line and '"type":"assistant"' in line and last_ts and (m := MSG_ID_RE.search(line)):
-                    # Each content block repeats its message's usage: count a message once.
-                    weight = sum(w * int(u.group(1)) for k, w in TOKEN_WEIGHT.items() if (u := USAGE_RE[k].search(line)))
-                    if (lt := _local(last_ts[:16], memo)) and weight:
-                        pending[m.group(1)] = (lt[0], weight)
-                        if (mm := MSG_MODEL_RE.search(line)) and mm.group(1) != "<synthetic>":
-                            by_message[m.group(1)] = (lt[0], mm.group(1), weight)
+                _note_message(line, last_ts, msgs, memo)
                 if '"name":"Skill"' in line and '"type":"assistant"' in line:
                     try:
                         for c in json.loads(line).get("message", {}).get("content") or []:
@@ -272,32 +316,40 @@ def parse_session(path: Path) -> Session | None:
                     relocated = d.get("relocatedCwd") or relocated
                 elif t == "cost-state":
                     cost = d.get("totalCostUSD", cost)
-                    # Running totals, without a timestamp: the growth since the last one belongs to
-                    # the time of the record before.
+                    # Running totals, without a timestamp: they belong to the time of the record before.
                     now_cost, now_lines = d.get("totalCostUSD") or 0.0, d.get("totalLinesAdded") or 0
-                    day = (last_ts or "")[:10]
-                    if day and isinstance(now_cost, (int, float)) and isinstance(now_lines, int):
-                        # Only growth counts: a total that drops is a new process (or two writing in
-                        # turns), and whatever it adds from there shows up as growth again.
-                        grew, added = max(0.0, now_cost - prev_cost), max(0, now_lines - prev_lines)
-                        weight = sum(w for _, w in pending.values())
-                        if grew and weight:  # spread over the messages it paid for, by their tokens
-                            for d, w in pending.values():
-                                day_cost[d] = day_cost.get(d, 0.0) + grew * w / weight
-                            priced_weight += weight
-                        elif grew and (lt := _local(last_ts[:16], memo)):
-                            day_cost[lt[0]] = day_cost.get(lt[0], 0.0) + grew
-                        if added and (lt := _local(last_ts[:16], memo)):
-                            day_lines[lt[0]] = day_lines.get(lt[0], 0) + added
-                        if grew:
-                            pending = {}
-                        prev_cost, prev_lines = now_cost, now_lines
+                    if last_ts and isinstance(now_cost, (int, float)) and isinstance(now_lines, int):
+                        cost_points.append((last_ts, float(now_cost), now_lines))
                 elif t == "user" and first_prompt is None and not d.get("isMeta"):
                     text = message_text(d.get("message", {}).get("content"))
                     if is_prompt(text):
                         first_prompt = text
     except OSError:
         return None
+    # Subagents write their own transcripts beside this one; their work is this session's too.
+    for sub in _subagent_files(path):
+        try:
+            with open(sub, errors="replace") as f:
+                sub_ts = None
+                for line in f:
+                    if m := TIMESTAMP_RE.search(line):
+                        sub_ts = m.group(1)
+                        minutes.add(sub_ts[:16])
+                    _note_message(line, sub_ts, msgs, memo)
+                    if '"name":"Skill"' in line and '"type":"assistant"' in line:
+                        try:
+                            for c in json.loads(line).get("message", {}).get("content") or []:
+                                if isinstance(c, dict) and c.get("name") == "Skill" and (k := (c.get("input") or {}).get("skill")):
+                                    skills[k] += 1
+                        except (ValueError, AttributeError):
+                            pass
+        except OSError:
+            continue
+    day_cost, day_lines, day_unpriced, priced_weight = _spread_costs(msgs, cost_points, memo)
+    day_models: dict[str, dict[str, float]] = {}
+    for _, day, model, w in msgs.values():
+        if model:
+            day_models.setdefault(day, {})[model] = day_models.setdefault(day, {}).get(model, 0.0) + w
     context_tokens, context_model = context_of(last_usage)
     if compacted_to is not None:  # compacted since the last reply: that's the context now
         context_tokens = compacted_to
@@ -333,7 +385,7 @@ def parse_session(path: Path) -> Session | None:
         context_tokens=context_tokens, context_model=context_model,
         born=getattr(st, "st_birthtime", st.st_ctime),
         active=active, hours=hours, day_cost={k: round(v, 4) for k, v in day_cost.items()},
-        day_unpriced=_by_day(pending), priced_weight=priced_weight, day_models=_models_by_day(by_message),
+        day_unpriced=day_unpriced, priced_weight=priced_weight, day_models=day_models,
         day_lines=day_lines, skills=dict(skills),
     )
 
@@ -355,9 +407,10 @@ def load_sessions(paths: Paths) -> list[Session]:
             continue
         key = str(f)
         entry = old.get(key)
-        if not entry or entry["mtime"] != st.st_mtime or entry["size"] != st.st_size:
+        subs = subagent_signature(f)  # subagents write their own files, which change on their own
+        if not entry or entry["mtime"] != st.st_mtime or entry["size"] != st.st_size or entry.get("subs") != subs:
             s = parse_session(f)
-            entry = {"mtime": st.st_mtime, "size": st.st_size, "session": asdict(s) if s else None}
+            entry = {"mtime": st.st_mtime, "size": st.st_size, "subs": subs, "session": asdict(s) if s else None}
             dirty = True
         new[key] = entry
         if entry["session"]:
