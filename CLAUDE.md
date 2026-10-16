@@ -22,7 +22,8 @@ models (they're in .claude/agents):
   quicker than a round trip.
 - **coder** (Sonnet): a change you can specify. Name the files and lines or the area, the behavior
   wanted and its edge cases, the tests to add, and the commands to run; the tighter the spec, the
-  faster and surer the result. Run independent pieces in parallel. It runs the tests for what it touched.
+  faster and surer the result. It runs the tests for what it touched. Run independent pieces in
+  parallel; when their files might overlap, give each `isolation: "worktree"` so they don't collide.
 - **tester** (Haiku): running the linter, type checker and tests while the work is in progress, and
   reporting failures.
 

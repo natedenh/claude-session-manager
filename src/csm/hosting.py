@@ -222,12 +222,22 @@ class HostingMixin:
             if not yes:
                 return
             try:
-                written = crew.apply(steps)
-            except OSError as e:
+                carried = crew.apply(steps)
+            except (OSError, UnicodeDecodeError) as e:
                 self.notify(f"Couldn't write the team: {e}", severity="error")
                 return
-            self.notify(f"Wrote {len(written)} file{'s' * (len(written) != 1)} in {tilde(project)}: "
-                        + ", ".join(p.name for p in written), timeout=5)
+            if not carried:
+                self.notify("Nothing written: the files changed since the plan was made", severity="warning")
+                return
+            wrote = [st for st in carried if st.action != "update"]
+            updated = [st for st in carried if st.action == "update"]
+            said = []
+            if wrote:
+                said.append(f"Wrote {len(wrote)} file{'s' * (len(wrote) != 1)}")
+            if updated:
+                said.append(f"updated {len(updated)}" if wrote else f"Updated {len(updated)} file{'s' * (len(updated) != 1)}")
+            self.notify(" and ".join(said) + f" in {tilde(project)}: " + ", ".join(st.path.name for st in carried),
+                        timeout=5)
         self.push_screen(TeamSetup(project, steps), done)
 
     def remember_model(self, project: str, model: str) -> None:
