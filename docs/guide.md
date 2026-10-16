@@ -88,7 +88,7 @@ csm reads agents from `<session>/subagents/agent-*.jsonl` and their `.meta.json`
 - `.claude/agents/tester.md` (Haiku, read-only): runs the tests, linter and type checker and reports failures.
 - A "Delegating to subagents" section at the end of the project's `CLAUDE.md`, telling the main session when to use each, what to keep for itself, and to pass `model` to unpinned agents like general-purpose.
 
-It shows every file before writing anything, and never overwrites: an agent file that exists is left alone, and the section is added once. They're files in the repo, so commit them to share the team; edit them as you like. Pair it with starting the session on `opusplan` (`ctrl+o` in the first-message box).
+It shows every file, or a diff for one it would change, before writing anything. A file that's an unchanged copy of an earlier csm version is updated, so `T` again picks up improvements; anything you edited by hand is left alone, and csm's diff is shown so you can copy changes in yourself. The section is added once. They're files in the repo, so commit them to share the team; edit them as you like. Pair it with starting the session on `opusplan` (`ctrl+o` in the first-message box).
 
 The stats screen (`I`) has a **Subagents** report for the last 30 days: agents and cost by model, against the same work all on Opus 5.5, and a nudge when general-purpose agents ran on Opus because they inherited the session's model.
 
@@ -152,7 +152,7 @@ The hook writes `~/.local/state/csm/status/<session id>.json` (removed at sessio
 - **Exports** (`E`): `<date> <title>.md` in `~/Downloads/claude-sessions/`, or `--export-dir` / `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
 - **Recaps** (`J`): `<date> Claude recap.md` in `CSM_RECAP_DIR`, else the export folder.
 
-**Touches Claude's files only when you ask:** rename (`r`) appends one record to the transcript, as `/rename` does; delete (`d`) moves the transcript to the Trash; `csm hooks install` edits `settings.json` after showing you the change and backing it up; `T` writes a project's `.claude/agents/scout.md`, `coder.md` and `tester.md` and appends to its `CLAUDE.md`, after showing you each, never overwriting; `m` types `/model` into a session, which makes Claude Code save that model as your default in `settings.json`.
+**Touches Claude's files only when you ask:** rename (`r`) appends one record to the transcript, as `/rename` does; delete (`d`) moves the transcript to the Trash; `csm hooks install` edits `settings.json` after showing you the change and backing it up; `T` writes a project's `.claude/agents/scout.md`, `coder.md` and `tester.md` and appends to its `CLAUDE.md`, after showing you each, updating only files that are unchanged copies of an earlier csm version and never overwriting your edits; `m` types `/model` into a session, which makes Claude Code save that model as your default in `settings.json`.
 
 **Sends**
 - **To Claude, only for the Summary page and `B`:** the last turns of the sessions being summarized or briefed, through your own Claude Code provider and credentials. Nothing else leaves your machine.

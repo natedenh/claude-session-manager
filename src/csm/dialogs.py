@@ -1,6 +1,7 @@
 """The small dialogs: prompts, confirmations, the first message, when idle, help."""
 from __future__ import annotations
 
+import difflib
 import os
 
 from rich.text import Text
@@ -13,6 +14,7 @@ from textual.suggester import Suggester
 from textual.widgets import Input, Label, Static, Switch, TextArea
 
 from . import autoarchive, models
+from .crew import CLAUDE_MD
 from .fmt import tilde
 
 
@@ -354,17 +356,26 @@ class TeamSetup(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         writes = [st for st in self.steps if st.action != "skip"]
         with Vertical(classes="dialog"):
-            yield Label(f"Set up a team in {tilde(self.project)}: scout (Haiku) finds things, coder (Sonnet) "
-                        "makes specified changes, tester (Haiku) runs the checks. CLAUDE.md tells the main "
-                        "session when to use each.", markup=False)
+            yield Label(f"Set up or update the team in {tilde(self.project)}: scout (Haiku) finds things, coder "
+                        "(Sonnet) makes specified changes, tester (Haiku) runs the checks. CLAUDE.md tells the "
+                        "main session when to use each.", markup=False)
             body = Text()
             for st in self.steps:
                 where = tilde(str(st.path))
+                new = CLAUDE_MD.strip() if st.path.name == "CLAUDE.md" else st.content.strip("\n")
                 if st.action == "skip":
-                    body.append(f"{where}: {st.note}\n\n", style="dim")
-                    continue
-                body.append(f"{where}  ({'add to the end' if st.action == 'append' else 'new file'})\n", style="bold")
-                body.append(st.content.strip("\n") + "\n\n")
+                    body.append(f"{where}: {st.note}\n", style="dim")
+                    if st.old:
+                        body.append("csm's current version would change:\n", style="dim")
+                        self._diff(body, st.old, new, dim=True)
+                    body.append("\n")
+                elif st.action == "update":
+                    body.append(f"{where}  (update from an earlier csm version)\n", style="bold")
+                    self._diff(body, st.old, new)
+                    body.append("\n")
+                else:
+                    body.append(f"{where}  ({'add to the end' if st.action == 'append' else 'new file'})\n", style="bold")
+                    body.append(st.content.strip("\n") + "\n\n")
             with VerticalScroll():
                 yield Static(body)
             if writes:
@@ -372,7 +383,19 @@ class TeamSetup(ModalScreen[bool]):
                             "on can use them.", markup=False)
                 yield Label("[dim]y = write these files    n / esc = cancel[/]")
             else:
-                yield Label("[dim]Nothing to do: this project has them all. esc = close[/]")
+                edited = any(st.old for st in self.steps)
+                yield Label("[dim]Nothing to write: this project's team is up to date"
+                            + (" (apart from files you edited)" if edited else "") + ". esc = close[/]")
+
+    @staticmethod
+    def _diff(body: Text, old: str, new: str, dim: bool = False) -> None:
+        """Append a unified diff of old to new, coloured, without the ---/+++ header."""
+        lines = difflib.unified_diff(old.strip("\n").splitlines(), new.splitlines(), lineterm="", n=2)
+        for line in lines:
+            if line.startswith(("---", "+++")):
+                continue
+            style = "green" if line.startswith("+") else "red" if line.startswith("-") else "dim"
+            body.append(line + "\n", style=f"dim {style}" if dim and style != "dim" else style)
 
     def action_answer(self, yes: bool) -> None:
         self.dismiss(yes and any(st.action != "skip" for st in self.steps))

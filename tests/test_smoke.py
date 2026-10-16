@@ -186,6 +186,21 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
             await pilot.press("escape")
             await draw(pilot, app)
 
+        # setting up a team: an update, a hand-edited file left alone, a new file, and nothing to do
+        from csm import crew
+        from csm.dialogs import TeamSetup
+        from pathlib import Path
+        nasty = "[bold]x[/]\n[/]\n[red]y"
+        hand = crew.Step(Path("/r/[bold]x[/]/.claude/agents/coder.md"), "[/]\n" + nasty, "skip",
+                         "edited by hand, left as it is", old=nasty)
+        upd = crew.Step(Path("/r/[bold]x[/]/CLAUDE.md"), crew.CLAUDE_MD, "update", "an earlier csm version", old=nasty)
+        new = crew.Step(Path("/r/[/]/.claude/agents/scout.md"), nasty, "create")
+        for steps in ([upd, hand, new], [hand], []):
+            app.push_screen(TeamSetup(NASTY[0], steps))
+            await draw(pilot, app)
+            await pilot.press("escape")
+            await draw(pilot, app)
+
         # toasts, including every tip and every session title
         for tip in tips.TIPS:
             app.notify(f"{tip.text}\n(ctrl+t turns tips off)")
