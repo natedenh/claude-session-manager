@@ -16,7 +16,7 @@ LIST_PRICE = {
     ("sonnet", "5.5"): 2.0, ("sonnet", "5"): 2.0, ("sonnet", "4.6"): 3.0,
     ("haiku", "5.5"): 0.10, ("haiku", "4.5"): 1.0,
 }
-SONNET, HAIKU = ("sonnet", "5.5"), ("haiku", "5.5")
+OPUS, SONNET, HAIKU = ("opus", "5.5"), ("sonnet", "5.5"), ("haiku", "5.5")
 NAME = re.compile(r"(fable|mythos|opus|sonnet|haiku)-(\d+)(?:-(\d))?(?=$|[-@:\[])")
 
 

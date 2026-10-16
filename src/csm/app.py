@@ -99,7 +99,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         scrollbar-background-active: $background; }
     #activity { height: 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
-    Prompt, Confirm, Help, AutoArchiveSettings, DirPrompt, FirstMessage, WhenIdle, FolderGone, ModelPick { align: center middle; }
+    Prompt, Confirm, Help, AutoArchiveSettings, DirPrompt, FirstMessage, WhenIdle, FolderGone, ModelPick, TeamSetup { align: center middle; }
     .dialog > Label { width: 100%; }  /* wrap long titles and paths rather than cutting them off */
     .dialog .row { height: auto; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
@@ -125,6 +125,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         Binding("f", "fork", "Fork", show=False),
         Binding("B", "brief", "Continue fresh", show=False),
         Binding("m", "switch_model", "Model", show=False),
+        Binding("T", "team", "Set up a team", show=False),
         Binding("r", "rename", "Rename", show=False),
         Binding("number_sign", "tag", "Tags", show=False),
         Binding("i", "note", "Note", show=False),
@@ -1073,7 +1074,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.push_screen(Costs(self.sessions, self.archived_by, ago))
 
     def action_stats(self) -> None:
-        self.push_screen(Stats(self.sessions, self.usage))
+        self.push_screen(Stats(self.sessions, self.usage, self.agents))
 
     def action_recap(self) -> None:
         self.notify("Writing today's recap (summarizing what changed first)…", timeout=3)

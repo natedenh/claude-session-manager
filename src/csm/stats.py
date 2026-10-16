@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from rich.console import Group
 from rich.table import Table
@@ -177,7 +177,39 @@ def yours(usage: Usage, today: date) -> list:
     return out
 
 
-def render(sessions: list[Session], today: date | None = None, usage: Usage | None = None) -> Group:
+def team_section(sessions: list[Session], agents: dict, today: date, per_weight: float) -> list:
+    """What subagents did in the last 30 days, by model, against the same work all on Opus 5.5."""
+    start = datetime.combine(today - timedelta(days=29), datetime.min.time()).timestamp()
+    ran = [a for ags in agents.values() for a in ags if (a.started or a.last) >= start]
+    if not ran or not per_weight:
+        return []
+    rows: dict[str, list] = {}  # family -> [agents, cost, cost on Opus 5.5]
+    for a in ran:
+        cost = a.weight * per_weight
+        row = rows.setdefault(models.family(a.model) or "unknown", [0, 0.0, 0.0])
+        row[0] += 1
+        row[1] += cost
+        row[2] += models.rescale(cost, a.model, models.OPUS) or cost
+    t = table(("Model", "left"), ("Agents", "right"), ("Cost", "right"), ("All on Opus", "right"))
+    for fam, (n, cost, opus) in sorted(rows.items(), key=lambda kv: -kv[1][1]):
+        t.add_row(fam, str(n), money(cost), money(opus))
+    paid, opus = sum(r[1] for r in rows.values()), sum(r[2] for r in rows.values())
+    out: list = [heading("Subagents, last 30 days"), t]
+    if opus > paid:
+        out.append(Text(f"{len(ran)} agents cost {money(paid)}; the same work all on Opus 5.5 about {money(opus)} "
+                        f"({(paid - opus) / opus:+.0%}).", style="dim"))
+    general = [a for a in ran if a.type == "general-purpose" and models.family(a.model) == "opus"]
+    if general:
+        cost = sum(a.weight for a in general) * per_weight
+        on_sonnet = sum(models.rescale(a.weight * per_weight, a.model, models.SONNET) or 0 for a in general)
+        out.append(Text(f"{len(general)} general-purpose agent{'s' * (len(general) != 1)} ran on Opus, inheriting "
+                        f"the session's model ({money(cost)}; on Sonnet about {money(on_sonnet)}). T on a project "
+                        "sets up a team pinned to Sonnet and Haiku.", style="yellow"))
+    return out
+
+
+def render(sessions: list[Session], today: date | None = None, usage: Usage | None = None,
+           agents: dict | None = None) -> Group:
     today = today or date.today()
     per_weight = rate(sessions)
     days = daily(sessions, per_weight)
@@ -252,6 +284,7 @@ def render(sessions: list[Session], today: date | None = None, usage: Usage | No
            heading("Busiest projects this week"), proj if projects else Text("Nothing yet this week.", style="dim"),
            heading("Cost by week"), weekly,
            *model_section(sessions, today, per_weight),
+           *team_section(sessions, agents or {}, today, per_weight),
            heading("When you work"), Text("Active minutes by hour of the day, all time.", style="dim"), clock,
            heading("Most-used skills"), sk if skills else Text("No skills used yet.", style="dim")]
     if usage is not None:
@@ -272,13 +305,13 @@ class Stats(Screen[None]):
     Stats #body { padding: 1 2; }
     """
 
-    def __init__(self, sessions: list[Session], usage: Usage | None = None):
+    def __init__(self, sessions: list[Session], usage: Usage | None = None, agents: dict | None = None):
         super().__init__()
-        self.sessions, self.usage = sessions, usage
+        self.sessions, self.usage, self.agents = sessions, usage, agents
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="body"):
-            yield Static(render(self.sessions, usage=self.usage))
+            yield Static(render(self.sessions, usage=self.usage, agents=self.agents))
         yield Footer()
 
     def on_mount(self) -> None:

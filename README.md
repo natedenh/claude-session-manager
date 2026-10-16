@@ -24,7 +24,7 @@ csm is built on macOS; the core runs anywhere tmux does. Optional: a logged-in `
 - **Sessions run beside the list**, like the desktop app's window. Opening another swaps it in; the last one keeps running out of sight. Close the terminal and they keep running; after a reboot, `csm` reopens the ones you had open.
 - **What needs you, first.** A session that finished its turn is marked `◆` with how long it has waited, one asking permission gets a red `?`, and one that's gone quiet mid-task gets `⧗`. `tab` opens whichever has waited longest; `ctrl+]` does it from inside a session.
 - **Start work without stopping.** `n` starts a new session on a first message while you stay in the list; `B` continues a session whose context is nearly full in a fresh one, from a brief of where it stands. Pick the model as you start one (each project remembers its pick), or switch a running one with `m`.
-- **Teams of subagents under their session**: what each was asked, on which model, how long it ran, what it cost and what it found, with the running ones always in view.
+- **Teams of subagents under their session**: what each was asked, on which model, how long it ran, what it cost and what it found, with the running ones always in view. `T` sets up a standard team in a project (scout and tester on Haiku, coder on Sonnet), and stats show what it saved against all-Opus.
 - **A summary of the last 48 hours:** what needs you, what was decided, what got done.
 
 ![The Summary page: what needs you, decisions, finished work, what's running](docs/screenshots/summary.svg)
@@ -57,7 +57,7 @@ The [guide](docs/guide.md) covers every key, icon, option and file.
 
 ## Privacy
 
-csm reads Claude Code's files and writes only its own, under `~/.cache/csm` and `~/.local/state/csm`. It changes Claude's files only when you ask: renaming a session, moving one to the Trash, or installing the hooks. Nothing leaves your machine except PR lookups through `gh`, and, for the Summary page and `B`, the end of a session sent to Claude through your own Claude Code provider. No telemetry. [Details](docs/guide.md#what-it-reads-writes-and-sends).
+csm reads Claude Code's files and writes only its own, under `~/.cache/csm` and `~/.local/state/csm`. It changes Claude's files only when you ask: renaming a session, moving one to the Trash, installing the hooks, or writing a project's team files (`T`). Nothing leaves your machine except PR lookups through `gh`, and, for the Summary page and `B`, the end of a session sent to Claude through your own Claude Code provider. No telemetry. [Details](docs/guide.md#what-it-reads-writes-and-sends).
 
 ## Development
 

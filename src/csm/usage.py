@@ -39,6 +39,8 @@ FEATURES = [
     Feature("new", "n", "new session in the highlighted project, optionally starting on a message"),
     Feature("new(True)", "N", "new session in a fresh git worktree"),
     Feature("new_project", "P", "new session in any directory, even one Claude has never run in"),
+    Feature("switch_model", "m", "switch a running session to another model (or pick one with ctrl+o as you start it)"),
+    Feature("team", "T", "set up a project team: subagents on Sonnet and Haiku that Opus hands work to"),
     Feature("brief", "B", "continue a long session fresh, from a brief of where it stands"),
     Feature("fork", "f", "fork a session to try something without disturbing it"),
     Feature("open_also", "|", "show a second session below the first"),

@@ -26,7 +26,7 @@ NASTY = [
 ]
 DIALOGS = [("U", "escape"), ("I", "escape"), ("dollar_sign", "escape"), ("L", "escape"), ("t", "escape"), ("W", "escape"),
            ("A", "escape"), ("at", "escape"), ("r", "escape"), ("number_sign", "escape"), ("i", "escape"),
-           ("R", "escape"), ("P", "escape"), ("n", "escape"), ("d", "escape"), ("X", "escape"), ("B", "escape")]
+           ("R", "escape"), ("P", "escape"), ("n", "escape"), ("d", "escape"), ("X", "escape"), ("B", "escape"), ("T", "escape")]
 SIZES = [(70, 68), (140, 45), (34, 20)]  # the real sidebar, full width, cramped
 
 

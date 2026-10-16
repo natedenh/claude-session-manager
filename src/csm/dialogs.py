@@ -7,7 +7,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets import Input, Label, Static, Switch, TextArea
@@ -39,6 +39,8 @@ HELP = """\
   n / N     new session in the highlighted project / in a new worktree. Asks for a first message:
             type one and ctrl+s to start it hidden while you stay here, or enter for an empty session.
             ctrl+o picks the model (opus, sonnet, haiku, opusplan); each project remembers its last pick
+  T         set up a team in the project: scout (Haiku), coder (Sonnet), tester (Haiku) in .claude/agents,
+            and when to use them in CLAUDE.md. Shows every file first; never overwrites one
   m         (tmux) switch a running session's model: types /model into it, or queues it until it's idle
   P         new session in any directory (tab completes; offers to create a missing one)
   tab       open the session that has waited longest for you (permission first); shift+tab goes back
@@ -334,6 +336,46 @@ class AutoArchiveSettings(ModalScreen[dict | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class TeamSetup(ModalScreen[bool]):
+    """Show what setting up a project's team would write, and ask before writing it."""
+    BINDINGS = [Binding("y", "answer(True)", show=False), Binding("n", "answer(False)", show=False),
+                Binding("escape", "answer(False)", show=False)]
+    DEFAULT_CSS = """
+    TeamSetup .dialog { width: 100; max-height: 90%; }
+    TeamSetup VerticalScroll { height: auto; max-height: 30; margin: 1 0; border: round $panel; }
+    """
+
+    def __init__(self, project: str, steps: list):
+        super().__init__()
+        self.project, self.steps = project, steps
+
+    def compose(self) -> ComposeResult:
+        writes = [st for st in self.steps if st.action != "skip"]
+        with Vertical(classes="dialog"):
+            yield Label(f"Set up a team in {tilde(self.project)}: scout (Haiku) finds things, coder (Sonnet) "
+                        "makes specified changes, tester (Haiku) runs the checks. CLAUDE.md tells the main "
+                        "session when to use each.", markup=False)
+            body = Text()
+            for st in self.steps:
+                where = tilde(str(st.path))
+                if st.action == "skip":
+                    body.append(f"{where}: {st.note}\n\n", style="dim")
+                    continue
+                body.append(f"{where}  ({'add to the end' if st.action == 'append' else 'new file'})\n", style="bold")
+                body.append(st.content.strip("\n") + "\n\n")
+            with VerticalScroll():
+                yield Static(body)
+            if writes:
+                yield Label("They're files in the repo: commit them to share the team. Sessions started from now "
+                            "on can use them.", markup=False)
+                yield Label("[dim]y = write these files    n / esc = cancel[/]")
+            else:
+                yield Label("[dim]Nothing to do: this project has them all. esc = close[/]")
+
+    def action_answer(self, yes: bool) -> None:
+        self.dismiss(yes and any(st.action != "skip" for st in self.steps))
 
 
 class Help(ModalScreen[None]):

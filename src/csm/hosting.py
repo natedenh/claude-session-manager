@@ -8,9 +8,9 @@ import subprocess
 
 from textual import work
 
-from . import brief, data, desktop, ghostty, launch, layout, models, worktrees
+from . import brief, crew, data, desktop, ghostty, launch, layout, models, worktrees
 from .data import Session
-from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, ModelPick, Prompt
+from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, ModelPick, Prompt, TeamSetup
 from .fmt import context_fraction, tilde
 from .launch import Launch, Pending
 from .widgets import SessionList
@@ -209,6 +209,26 @@ class HostingMixin:
                 self.begin(launch.new(project, worktree, text, model=model), project, hidden=bool(text))
         self.push_screen(FirstMessage(tilde(project) + (" (new worktree)" if worktree else ""),
                                       model=default, default=default), done)
+
+    def action_team(self) -> None:
+        if not (project := self.current_project()):
+            return
+        if not os.path.isdir(project):
+            self.notify(f"{tilde(project)} no longer exists", severity="error")
+            return
+        steps = crew.plan(project)
+
+        def done(yes: bool) -> None:
+            if not yes:
+                return
+            try:
+                written = crew.apply(steps)
+            except OSError as e:
+                self.notify(f"Couldn't write the team: {e}", severity="error")
+                return
+            self.notify(f"Wrote {len(written)} file{'s' * (len(written) != 1)} in {tilde(project)}: "
+                        + ", ".join(p.name for p in written), timeout=5)
+        self.push_screen(TeamSetup(project, steps), done)
 
     def remember_model(self, project: str, model: str) -> None:
         """The model last picked in a project is what its next new session starts on."""
