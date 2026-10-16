@@ -3,7 +3,7 @@ import os
 import time
 
 import pytest
-from conftest import rec, user
+from conftest import rec
 
 from csm import agents
 from csm.viewer import Viewer

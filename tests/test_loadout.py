@@ -1,4 +1,3 @@
-import json
 
 from conftest import rec, user
 

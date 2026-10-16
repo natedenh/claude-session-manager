@@ -24,5 +24,7 @@ jobs:
           python-version: "3.11"
       - name: Install
         run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check
       - name: Test
         run: uv run pytest -q

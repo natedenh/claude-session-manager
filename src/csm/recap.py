@@ -54,7 +54,7 @@ def render(sessions: list[Session], day: date, digests: Digests, last_said: Call
             d = digests.get(s)
             out.append(f"- **{s.title}** ({s.project_name}): {(d.question if d and d.question else None) or 'waiting for you'}")
 
-    for project, ss in sorted(projects.items(), key=lambda kv: -mins(kv[1])):
+    for _project, ss in sorted(projects.items(), key=lambda kv: -mins(kv[1])):
         out += ["", f"## {ss[0].project_name} · {span(mins(ss))} · {money(spent(ss))}"]
         for s in sorted(ss, key=lambda s: -s.active.get(key, 0)):
             facts = [span(s.active[key]), money(spend(s, key, per_weight))]

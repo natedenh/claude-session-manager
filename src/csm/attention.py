@@ -32,7 +32,7 @@ class AttentionMixin:
             self.signals.archives_one_by_one = len(self.archived_at)
         self.last_action = (feature or name, now)
 
-    def on_app_focus(self, event: events.AppFocus) -> None:
+    def on_app_focus(self, _event: events.AppFocus) -> None:
         self.last_action = ("back", time.time())  # back in the list from a session pane
 
     def offer_tip(self) -> None:
