@@ -39,6 +39,7 @@ Inside your own tmux, `csm` uses the current window instead, and `q` quits rathe
 | `P` | new session in any directory, such as a project Claude has never run in. Starts at the highlighted project's parent folder; `tab` completes, and a missing directory is created after you confirm |
 | `B` | continue fresh: a model reads the end of the highlighted session and writes a brief (goal, where things stand, decisions, open questions, next step, and where the old transcript is). You edit it in the first-message box, and `ctrl+s` starts a new session on it named "<title> (continued)", in the same directory. Handy when a session's context is nearly full (`◔`). It uses Claude Opus 5.5 the way Claude Code reaches it (on Bedrock, `ANTHROPIC_DEFAULT_OPUS_MODEL`); set `CSM_BRIEF_MODEL` to change it |
 | `f` | fork the highlighted session (`--fork-session`), named "<title> (fork)" |
+| `Y` | reopen the highlighted session with `--dangerously-skip-permissions`, after you confirm: Claude then runs every tool, edits and shell commands included, without asking. Only for a session that isn't running, since permissions can only be skipped from the start; close it first. While it runs, its row shows a red `⚠ unguarded`. csm remembers it for that session, so restoring the layout after a reboot reopens it the same way; opening it normally (`enter`, `o`, ...) clears that |
 | `r` | rename (writes a `custom-title` record, like `/rename`) |
 | `g` | open the session's PR in the browser |
 | `.` | open the project directory in your editor: `$CSM_EDITOR`, else `code`, else `cursor`, else Finder |
@@ -148,7 +149,7 @@ The hook writes `~/.local/state/csm/status/<session id>.json` (removed at sessio
 
 **Writes, all its own**
 - `~/.cache/csm/`: `index.json` (the parse cache, keyed on file mtime and size, so after the first run only changed files are read), `prs.json` (PR status) and `summaries.json` (Summary digests).
-- `~/.local/state/csm/`: `state.json` (archived, pinned, collapsed, tags, notes, settings), `usage.json` (which features you use, by name and date, for tips), `status/` (from the optional hooks) and `crash.log` (tracebacks, if the sidebar ever crashes; it restarts itself).
+- `~/.local/state/csm/`: `state.json` (archived, pinned, collapsed, tags, notes, sessions last reopened with `Y` (unguarded), settings), `usage.json` (which features you use, by name and date, for tips), `status/` (from the optional hooks) and `crash.log` (tracebacks, if the sidebar ever crashes; it restarts itself).
 - **Exports** (`E`): `<date> <title>.md` in `~/Downloads/claude-sessions/`, or `--export-dir` / `CSM_EXPORT_DIR`. Re-exporting a session overwrites its file; a different session with the same name gets ` (2)`.
 - **Recaps** (`J`): `<date> Claude recap.md` in `CSM_RECAP_DIR`, else the export folder.
 

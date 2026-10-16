@@ -176,7 +176,7 @@ async def test_hook_waiting_is_immediate_and_opening_clears(sessions, sent, monk
         assert set(app.waiting) == {"a1"} and sent == ["Fix login bug is waiting"]
         app.poll_live()
         assert set(app.waiting) == {"a1"}
-        monkeypatch.setattr(app, "resume_flow", lambda s: None)
+        monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: None)
         app.resume(app.by_id["a1"])
         app.poll_live()
         assert set(app.waiting) == set() and app.permission == {}

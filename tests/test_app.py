@@ -864,7 +864,7 @@ async def test_ctrl_bracket_opens_the_next_waiting_one(sessions, monkeypatch):
     opened = []
     async with app.run_test() as pilot:
         await settle(pilot)
-        monkeypatch.setattr(app, "resume_flow", lambda s: opened.append(s.id))
+        monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: opened.append(s.id))
         app.waiting["b1"] = time.time()
         app.query_one("#search").focus()  # works wherever focus is
         await pilot.press("ctrl+right_square_bracket")

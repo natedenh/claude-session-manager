@@ -645,7 +645,7 @@ class State:
     `save` merges: what's on disk now, plus only the changes made here since the last load.
     """
 
-    SETS = ("archived", "collapsed", "pinned", "keep")
+    SETS = ("archived", "collapsed", "pinned", "keep", "unguarded")
     DICTS = ("auto_archive", "tags", "notes", "when_idle", "models")
 
     def __init__(self, path: Path):
@@ -667,6 +667,7 @@ class State:
         self.flat: bool = bool(d.get("flat", False))
         self.wave: str = d.get("wave") if isinstance(d.get("wave"), str) else ""  # activity strip style
         self.keep: set[str] = set(d.get("keep", []))
+        self.unguarded: set[str] = set(d.get("unguarded", []))  # last launched with --dangerously-skip-permissions
         self.auto_archive: dict = autoarchive.normalize(d.get("auto_archive"))
         self.tags: dict[str, list[str]] = {k: normalize_tags(v) for k, v in (d.get("tags") or {}).items()
                                            if isinstance(v, list)}
@@ -680,7 +681,8 @@ class State:
 
     def _snapshot(self) -> dict:
         return {"archived": set(self.archived), "collapsed": set(self.collapsed), "pinned": set(self.pinned),
-                "flat": self.flat, "wave": self.wave, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
+                "flat": self.flat, "wave": self.wave, "keep": set(self.keep), "unguarded": set(self.unguarded),
+                "auto_archive": dict(self.auto_archive),
                 "tags": dict(self.tags), "notes": dict(self.notes), "when_idle": dict(self.when_idle),
                 "models": dict(self.models)}
 
@@ -728,7 +730,8 @@ class State:
         self._merge()
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
                                 "pinned": sorted(self.pinned), "flat": self.flat, "wave": self.wave,
-                                "keep": sorted(self.keep), "auto_archive": self.auto_archive,
+                                "keep": sorted(self.keep), "unguarded": sorted(self.unguarded),
+                                "auto_archive": self.auto_archive,
                                 "tags": self.tags, "notes": self.notes, "when_idle": self.when_idle,
                                 "models": self.models})
         self.base = self._snapshot()

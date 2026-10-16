@@ -31,8 +31,9 @@ def _claude() -> str:
     return shutil.which("claude") or "claude"
 
 
-def resume(session_id: str, cwd: str, label: str = "") -> Launch:
-    return Launch(cwd, [_claude(), "-r", session_id], session_id, label)
+def resume(session_id: str, cwd: str, label: str = "", skip_permissions: bool = False) -> Launch:
+    return Launch(cwd, [_claude(), "-r", session_id] + (["--dangerously-skip-permissions"] if skip_permissions else []),
+                  session_id, label)
 
 
 def new(project: str, worktree: bool = False, prompt: str = "", name: str = "", model: str = "") -> Launch:

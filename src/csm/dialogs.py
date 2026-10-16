@@ -48,6 +48,7 @@ HELP = """\
   |         (tmux) show the highlighted session as a second pane; enter goes back to one
   R         (tmux) reply to the highlighted session without opening it
   f         fork the highlighted session
+  Y         reopen the highlighted session with permissions skipped (asks first)
   B         continue fresh: a model writes a brief of the session, you edit it, and it opens a new one
             (named "<title> (continued)"); for when the context is nearly full
   o / O     resume in a new Ghostty tab / window
@@ -82,7 +83,7 @@ HELP = """\
   on a project:  [warn]±3[/] uncommitted files   [cyan]↑2[/] commits to push   [dim]↓1[/] to pull   [dim]▁▃▇[/] active minutes, last 7 days
   ◆ waiting for you   [bold red]?[/] needs permission (with hooks); both show how long, ◆ 12m
   [warn]⧗[/] stuck: busy, but nothing written for 10+ minutes (--stuck-minutes)   ⑃ fork   [red]◔[/] context over 80%
-  bg  a background job   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
+  bg  a background job   [bold red]⚠ unguarded[/] running with permissions skipped (Y)   [dim]⇢[/] a terminal attached to a background job (enter on the job shows it)
 """
 
 

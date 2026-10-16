@@ -123,6 +123,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         Binding("R", "reply", "Reply", show=False),
         Binding("vertical_line", "open_also", "Side by side", show=False),
         Binding("f", "fork", "Fork", show=False),
+        Binding("Y", "reopen_unguarded", "Reopen unguarded", show=False),
         Binding("B", "brief", "Continue fresh", show=False),
         Binding("m", "switch_model", "Model", show=False),
         Binding("T", "team", "Set up a team", show=False),
@@ -474,6 +475,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         fork = self.fork_tag(s)
         tags = Text("  " + " ".join(f"#{t}" for t in self.state.tags[s.id]), style="dim") if s.id in self.state.tags else Text()
         bg = Text("  bg", style="dim") if live and live.kind == "bg" else Text()
+        if s.id in self.state.unguarded and (s.id in self.hosted or live):
+            bg = Text.assemble(bg, Text("  ⚠ unguarded", style="bold red"))
         then = Text(f"  @{q['do']}", style="cyan") if (q := self.state.when_idle.get(s.id)) else Text()
         fam = models.family(s.context_model) if getattr(self, "mixed_models", False) else None
         then = Text.assemble((f"  {fam}", "dim"), then) if fam else then

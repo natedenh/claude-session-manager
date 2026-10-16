@@ -70,7 +70,7 @@ async def test_app_counts_keys_and_offers_a_tip(sessions, monkeypatch):  # noqa:
         await settle(pilot)
         await pilot.press("exclamation_mark", "exclamation_mark")
         assert app.usage.total("toggle('waiting')") == 2
-        monkeypatch.setattr(app, "resume_flow", lambda s: None)
+        monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: None)
         app.waiting["a1"] = time.time()
         app.resume(app.by_id["a1"])
         app.waiting["b1"] = time.time()
