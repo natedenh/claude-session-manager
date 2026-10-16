@@ -55,11 +55,15 @@ class HostingMixin:
         try:
             for sid in [x for x in want if x not in shown]:  # the ones that were running out of sight
                 s = by_id[sid]
-                self.host.start(sid, s.origin or s.cwd, launch.resume(sid, s.origin or s.cwd, s.title).command, s.title[:40])
+                self.host.start(sid, s.origin or s.cwd, launch.resume(sid, s.origin or s.cwd, s.title,
+                                                                      skip_permissions=sid in self.state.unguarded).command,
+                                s.title[:40])
             for i, sid in enumerate(shown):
                 s = by_id[sid]
                 (self.host.show if i == 0 else self.host.show_also)(
-                    sid, s.origin or s.cwd, launch.resume(sid, s.origin or s.cwd, s.title).command, s.title[:40])
+                    sid, s.origin or s.cwd,
+                    launch.resume(sid, s.origin or s.cwd, s.title, skip_permissions=sid in self.state.unguarded).command,
+                    s.title[:40])
             if shown and hasattr(self.host, "run"):
                 self.host.run("select-pane", "-t", self.host.me)  # stay in the list
         except (subprocess.CalledProcessError, OSError) as e:
@@ -75,7 +79,7 @@ class HostingMixin:
 
     # ---- list ------------------------------------------------------------
 
-    def resume(self, s: Session) -> None:
+    def resume(self, s: Session, unguarded: bool = False) -> None:
         if not self.via_tab:
             self.usage.record("open")
             if s.id in self.waiting or s.id in self.permission:
@@ -90,12 +94,12 @@ class HostingMixin:
             self.rebuild()
         if s.origin and s.id not in self.live and s.id not in self.hosted:
             if not os.path.isdir(s.origin):
-                self.folder_gone(s)
+                self.folder_gone(s, unguarded)
                 return
             s.cwd = s.origin  # it may have been missing when the transcript was read, and back since
-        self.resume_flow(s)
+        self.resume_flow(s, unguarded)
 
-    def folder_gone(self, s: Session) -> None:
+    def folder_gone(self, s: Session, unguarded: bool = False) -> None:
         """Offer to put a deleted or moved folder back, so Claude Code can find the session again."""
         branch = None
         if data.WORKTREE_MARK in s.origin and s.branch and os.path.isdir(s.project):
@@ -120,11 +124,11 @@ class HostingMixin:
                 return
             s.cwd = s.origin
             self.rebuild()
-            self.resume_flow(s)
+            self.resume_flow(s, unguarded)
         self.push_screen(FolderGone(s.title, s.origin, branch), done)
 
     @work(thread=True, exclusive=True, group="resume")
-    def resume_flow(self, s: Session) -> None:
+    def resume_flow(self, s: Session, unguarded: bool = False) -> None:
         if s.id in self.hosted:
             self.call_from_thread(self.start, s)
             return
@@ -150,12 +154,36 @@ class HostingMixin:
         if live:
             msg = (f"“{s.title}” is already open in {live.entrypoint or 'claude'} (pid {live.pid}).\n"
                    "Resuming it a second time means two processes writing one transcript. Resume anyway?")
-            self.call_from_thread(self.push_screen, Confirm(msg), lambda yes: yes and self.start(s))
+            self.call_from_thread(self.push_screen, Confirm(msg),
+                                  lambda yes: yes and self.start(s, unguarded=unguarded))
         else:
-            self.call_from_thread(self.start, s)
+            self.call_from_thread(self.start, s, unguarded=unguarded)
 
-    def start(self, s: Session, also: bool = False) -> None:
-        self.start_launch(launch.resume(s.id, s.cwd, s.title), also)
+    def start(self, s: Session, also: bool = False, unguarded: bool = False) -> None:
+        if s.id not in self.hosted and s.id not in self.live:  # a real launch, not a switch to a running one
+            self.remember_unguarded(s.id, unguarded)
+        self.start_launch(launch.resume(s.id, s.cwd, s.title, skip_permissions=unguarded), also)
+
+    def remember_unguarded(self, sid: str, unguarded: bool) -> None:
+        """Which sessions csm last launched with permissions skipped, so a layout restore does the same."""
+        if unguarded == (sid in self.state.unguarded):
+            return
+        if unguarded:
+            self.state.unguarded.add(sid)
+        else:
+            self.state.unguarded.discard(sid)
+        self.state.save()
+
+    def action_reopen_unguarded(self) -> None:
+        if not (s := self.selected()):
+            return
+        if s.id in self.hosted or s.id in self.live:
+            self.notify(f"“{s.title}” is already running, and permissions can only be skipped from the start. "
+                        "Close it, then press Y.", severity="warning")
+            return
+        msg = (f"“{s.title}” will reopen with --dangerously-skip-permissions: Claude runs every tool, "
+               "including edits and shell commands, without asking. Reopen it?")
+        self.push_screen(Confirm(msg), lambda yes: yes and self.resume(s, unguarded=True))
 
     def start_launch(self, l: Launch, also: bool = False) -> None:
         self.clear_attention(l.focus_id)
@@ -462,4 +490,5 @@ class HostingMixin:
         except RuntimeError as e:
             self.call_from_thread(self.notify, f"Ghostty: {e}", severity="error")
         else:
+            self.call_from_thread(self.remember_unguarded, s.id, False)  # launched without the flag
             self.call_from_thread(self.notify, f"Opened “{s.title}” in a new {where}", timeout=2)

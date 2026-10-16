@@ -11,7 +11,7 @@ from test_app import CSM, settle, sessions  # noqa: F401  (fixture)
 
 def resumed(app, monkeypatch):
     seen = []
-    monkeypatch.setattr(app, "resume_flow", lambda s: seen.append((s.id, s.cwd)))
+    monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: seen.append((s.id, s.cwd)))
     return seen
 
 

@@ -51,7 +51,7 @@ async def test_opening_clears_and_leaving_live_clears(sessions, monkeypatch):
         set_status(sessions, "a1", "idle")
         app.poll_live()
         assert set(app.waiting) == {"a1"}
-        monkeypatch.setattr(app, "resume_flow", lambda s: None)  # opening itself is covered elsewhere
+        monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: None)  # opening itself is covered elsewhere
         app.resume(app.by_id["a1"])
         assert set(app.waiting) == set()
         app.waiting["a1"] = 0.0
@@ -144,7 +144,7 @@ async def test_tab_opens_the_longest_waiting_then_the_next(sessions, sent, monke
     opened = []
     async with app.run_test() as pilot:
         await settle(pilot)
-        monkeypatch.setattr(app, "resume_flow", lambda s: opened.append(s.id))
+        monkeypatch.setattr(app, "resume_flow", lambda s, unguarded=False: opened.append(s.id))
         await pilot.press("tab")
         assert opened == [] and app.trail == []  # nothing waiting
         now = time.time()
