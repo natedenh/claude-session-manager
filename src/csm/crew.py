@@ -62,7 +62,7 @@ Makefile, CI config). Run what the caller asked for, or all of them for the area
 
 Report back with each command you ran and whether it passed. For each failure, give the test or file,
 the assertion or error in a line or two, and path:line where it points. Don't guess at fixes.
-"""),
+""", tools="Read, Grep, Glob, Bash"),
 }
 
 CLAUDE_MD = f"""

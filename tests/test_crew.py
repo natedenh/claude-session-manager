@@ -28,6 +28,10 @@ def test_every_agent_is_pinned_to_a_cheaper_model():
     assert pins == {"scout": "model: haiku", "coder": "model: sonnet", "tester": "model: haiku"}
 
 
+def test_the_tester_cannot_edit():
+    assert "\ntools: Read, Grep, Glob, Bash\n" in crew.AGENTS["tester"]
+
+
 async def test_T_shows_the_files_then_writes_them(sessions, tmp_path):  # noqa: F811
     beta = tmp_path / "beta"
     app = CSM(sessions)

@@ -246,12 +246,18 @@ class HostingMixin:
         if not self.host or s.id not in self.hosted:
             self.notify("Switching models only works for sessions open in csm", severity="warning")
             return
-        busy = (live := self.live.get(s.id)) is not None and live.status == "busy"
+        # anything but idle, including a permission prompt or a question: typed into one, /model + Enter would answer it
+        busy = ((live := self.live.get(s.id)) is not None and live.status != "idle"
+                or s.id in self.permission or s.id in self.waiting)
 
         def picked(model: str | None) -> None:
             if not model:
                 return
             if busy:  # typed now, it would wait in its queue behind the current turn anyway; say so instead
+                if queued := self.state.when_idle.get(s.id):
+                    self.notify(f"“{s.title}” already has @{queued['do']} queued; the model wasn't switched",
+                                severity="warning")
+                    return
                 self.state.when_idle[s.id] = {"do": "send", "text": f"/model {model}"}
                 self.state.save()
                 self.notify(f"“{s.title}” switches to {model} when it's done", timeout=3)
