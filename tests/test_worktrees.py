@@ -4,7 +4,7 @@ import subprocess
 import time
 
 import pytest
-from conftest import rec, user
+from conftest import user
 
 from csm import data, prs, worktrees
 from csm.app import CSM

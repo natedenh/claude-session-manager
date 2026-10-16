@@ -59,9 +59,9 @@ def test_the_stats_team_report_compares_with_all_opus():
     team = {"s1": [agents.Agent("a", "Map it", "code-search", "", model="claude-sonnet-5-5", started=when, weight=100.0),
                    agents.Agent("b", "Do it", "general-purpose", "", model="claude-opus-5-5", started=when, weight=50.0),
                    agents.Agent("c", "Old", "general-purpose", "", model="claude-opus-5-5", started=1.0, weight=999.0)]}
-    out = stats.team_section([], team, today, per_weight=0.01)
+    out = stats.team_section(team, today, per_weight=0.01)
     text = "\n".join(str(x) for x in out if hasattr(x, "plain"))
     # sonnet: $1.00 (all Opus $2.00); opus: $0.50. Paid $1.50, all on Opus $2.50.
     assert "2 agents cost $1.50; the same work all on Opus 5.5 about $2.50 (-40%)" in text
     assert "1 general-purpose agent ran on Opus" in text and "on Sonnet about $0.25" in text
-    assert stats.team_section([], {}, today, 0.01) == []
+    assert stats.team_section({}, today, 0.01) == []

@@ -141,7 +141,7 @@ def parse(cron: str) -> tuple | None:
         return None
     try:
         minute, hour, dom, month, dow = (_field(p, lo, hi) for p, (lo, hi) in
-                                         zip(parts, ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))))
+                                         zip(parts, ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7)), strict=False))
     except ValueError:
         return None
     if dow is not None:

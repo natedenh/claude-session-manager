@@ -81,7 +81,7 @@ def model_section(sessions: list[Session], today: date, per_weight: float) -> li
         for to in (models.SONNET, models.HAIKU):
             other = [models.rescale(c, m, to) for m, c in period.items()]
             if None in other:  # a model we can't price: leave it as it was
-                other = [o if o is not None else c for o, c in zip(other, period.values())]
+                other = [o if o is not None else c for o, c in zip(other, period.values(), strict=False)]
             would = sum(other)
             lines.append(f"on {to[0].title()} {to[1]} about {money(would)} ({(would - paid) / paid:+.0%})")
         out.append(Text(f"{name} cost {money(paid)}; " + ", ".join(lines) + ".", style="dim"))
@@ -177,7 +177,7 @@ def yours(usage: Usage, today: date) -> list:
     return out
 
 
-def team_section(sessions: list[Session], agents: dict, today: date, per_weight: float) -> list:
+def team_section(agents: dict, today: date, per_weight: float) -> list:
     """What subagents did in the last 30 days, by model, against the same work all on Opus 5.5."""
     start = datetime.combine(today - timedelta(days=29), datetime.min.time()).timestamp()
     ran = [a for ags in agents.values() for a in ags if (a.started or a.last) >= start]
@@ -284,7 +284,7 @@ def render(sessions: list[Session], today: date | None = None, usage: Usage | No
            heading("Busiest projects this week"), proj if projects else Text("Nothing yet this week.", style="dim"),
            heading("Cost by week"), weekly,
            *model_section(sessions, today, per_weight),
-           *team_section(sessions, agents or {}, today, per_weight),
+           *team_section(agents or {}, today, per_weight),
            heading("When you work"), Text("Active minutes by hour of the day, all time.", style="dim"), clock,
            heading("Most-used skills"), sk if skills else Text("No skills used yet.", style="dim")]
     if usage is not None:

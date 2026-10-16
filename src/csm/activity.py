@@ -89,7 +89,7 @@ def starfield(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[s
     return "".join(out), light
 
 
-def scanner(width: int, phase: float, amp: float = 1.0, n: int = 1) -> tuple[str, list[float]]:
+def scanner(width: int, phase: float, _amp: float = 1.0, n: int = 1) -> tuple[str, list[float]]:
     """KITT's scanner: a light sweeping back and forth, slowing into each end, trailing a fade.
     The trail is where the light was a moment ago, so it flips sides at each bounce by itself.
     More working sessions make the light wider."""
@@ -206,7 +206,7 @@ class Activity(Static):
         text = Text(label, style="warn")
         red = self.kind == "knight rider"
         unlit = (KITT_OFF if red else UNLIT) if self.app.current_theme.dark else (KITT_OFF_ON_LIGHT if red else UNLIT_ON_LIGHT)
-        for ch, g in zip(line, light):
+        for ch, g in zip(line, light, strict=False):
             g *= self.amp
             text.append(ch, unlit if g < 0.12 else lit(g, KITT if red else (EMBER, SPARK)))
         self.update(text)
@@ -223,5 +223,5 @@ KITT_OFF_ON_LIGHT = Style(color=Color.parse("#d8b4b0"))
 
 def lit(g: float, ramp: tuple = (EMBER, SPARK)) -> Style:
     lo, hi = ramp
-    rgb = tuple(round(a + (b - a) * g) for a, b in zip(lo, hi))
+    rgb = tuple(round(a + (b - a) * g) for a, b in zip(lo, hi, strict=False))
     return Style(color=Color.from_rgb(*rgb), bold=g > 0.6)
