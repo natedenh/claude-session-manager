@@ -77,6 +77,27 @@ async def test_m_switches_a_running_session_now_or_when_its_turn_ends(sessions):
         assert ("send", "b1", "/model sonnet") in host.calls and "b1" not in app.state.when_idle
 
 
+async def test_m_queues_behind_a_permission_prompt_and_keeps_an_existing_queued_action(sessions):  # noqa: F811
+    host = FakeHost()
+    host.panes = {"b1": "%2"}
+    app = CSM(sessions, host=host)
+    (sessions.live / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "b1", "status": "idle"}))
+    async with app.run_test() as pilot:
+        await settle(pilot)
+        app.poll_host()
+        assert app.selected().id == "b1"
+        app.permission["b1"] = "permission"
+        await pilot.press("m", "s")
+        await settle(pilot)
+        assert ("send", "b1", "/model sonnet") not in host.calls
+        assert app.state.when_idle["b1"] == {"do": "send", "text": "/model sonnet"}
+        app.state.when_idle["b1"] = {"do": "retire"}
+        await pilot.press("m", "h")
+        await settle(pilot)
+        assert app.state.when_idle["b1"] == {"do": "retire"}
+        assert any("@retire" in str(n.message) for n in app._notifications)
+
+
 async def test_m_needs_a_session_open_in_csm(sessions):  # noqa: F811
     app = CSM(sessions, host=FakeHost())
     async with app.run_test() as pilot:
