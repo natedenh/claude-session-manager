@@ -12,7 +12,7 @@ from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets import Input, Label, Static, Switch, TextArea
 
-from . import autoarchive
+from . import autoarchive, models
 from .fmt import tilde
 
 
@@ -37,7 +37,9 @@ HELP = """\
   ctrl+\\    cycle focus: this list, then the sessions beside it top to bottom (tmux);
             with none open, switch between this list and the preview
   n / N     new session in the highlighted project / in a new worktree. Asks for a first message:
-            type one and ctrl+s to start it hidden while you stay here, or enter for an empty session
+            type one and ctrl+s to start it hidden while you stay here, or enter for an empty session.
+            ctrl+o picks the model (opus, sonnet, haiku, opusplan); each project remembers its last pick
+  m         (tmux) switch a running session's model: types /model into it, or queues it until it's idle
   P         new session in any directory (tab completes; offers to create a missing one)
   tab       open the session that has waited longest for you (permission first); shift+tab goes back
   ctrl+]    the same from anywhere, even inside a session (tmux): answer one, ctrl+], the next
@@ -153,11 +155,14 @@ class DirPrompt(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class FirstMessage(ModalScreen[str | None]):
-    """Ask what a new session should start on. "" starts it empty, as before; None cancels."""
-    BINDINGS = [Binding("escape", "cancel", show=False), Binding("ctrl+s", "start", show=False)]
+class FirstMessage(ModalScreen[tuple[str, str] | None]):
+    """Ask what a new session should start on, and on which model: (message, model alias).
+    An empty message starts it empty, as before; None cancels."""
+    BINDINGS = [Binding("escape", "cancel", show=False), Binding("ctrl+s", "start", show=False),
+                Binding("ctrl+o", "next_model", show=False)]
     DEFAULT_CSS = """
     FirstMessage TextArea { height: 8; margin-top: 1; }
+    FirstMessage #model { margin-top: 1; }
     """
 
     class Box(TextArea):
@@ -165,27 +170,68 @@ class FirstMessage(ModalScreen[str | None]):
             if event.key == "enter" and not self.text.strip():  # nothing typed: start it plain
                 event.stop()
                 event.prevent_default()
-                self.screen.dismiss("")
+                self.screen.action_start()
                 return
             await super()._on_key(event)
 
-    def __init__(self, where: str, text: str = ""):
+    def __init__(self, where: str, text: str = "", model: str = "", default: str = ""):
         super().__init__()
         self.where, self.text = where, text
+        self.model, self.default = model, default  # default: the project's, to say when this differs
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label(f"New session in {self.where}: first message ({'edit as you like' if self.text else 'optional'})",
                         markup=False)
             yield self.Box(self.text, soft_wrap=True, show_line_numbers=False)
+            yield Label(self.model_line(), id="model")
             yield Label("[dim]ctrl+s = start; with a message it runs hidden and you stay here\n"
-                        "enter on an empty box = start it beside the list    esc = cancel[/]")
+                        "enter on an empty box = start it beside the list    ctrl+o = model    esc = cancel[/]")
+
+    def model_line(self) -> Text:
+        line = Text("Model: ")
+        line.append(models.describe(self.model), style="bold")
+        line.append("   this project's default" if self.model == self.default else
+                    "   becomes this project's default", style="dim")
+        return line
+
+    def action_next_model(self) -> None:
+        self.model = models.next_choice(self.model)
+        self.query_one("#model", Label).update(self.model_line())
+
+    def on_click(self, event) -> None:
+        if getattr(event.widget, "id", None) == "model":
+            self.action_next_model()
 
     def action_start(self) -> None:
-        self.dismiss(self.query_one(TextArea).text.strip())
+        self.dismiss((self.query_one(TextArea).text.strip(), self.model))
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class ModelPick(ModalScreen[str | None]):
+    """Switch a running session's model: one key per model."""
+    KEYS = {"o": "opus", "s": "sonnet", "h": "haiku", "p": "opusplan"}
+    BINDINGS = [*(Binding(k, f"pick('{v}')", show=False) for k, v in KEYS.items()),
+                Binding("escape", "pick", show=False), Binding("c", "pick", show=False)]
+
+    def __init__(self, title: str, current: str, busy: bool):
+        super().__init__()
+        self.title_text, self.current, self.busy = title, current, busy
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(f"Switch “{self.title_text}” to" + (f" (now {self.current}):" if self.current else ":"),
+                        markup=False)
+            yield Label("\n".join(f"  {k}  {models.describe(v)}" for k, v in self.KEYS.items()), markup=False)
+            yield Label(("It's working: csm sends /model when it's done. " if self.busy else "csm types /model into it. ")
+                        + "Claude Code also makes the pick your default for new sessions started outside csm.",
+                        markup=False)
+            yield Label("[dim]esc = cancel[/]")
+
+    def action_pick(self, choice: str | None = None) -> None:
+        self.dismiss(choice)
 
 
 class FolderGone(ModalScreen[str | None]):

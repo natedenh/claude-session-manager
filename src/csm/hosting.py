@@ -8,9 +8,9 @@ import subprocess
 
 from textual import work
 
-from . import brief, data, desktop, ghostty, launch, layout, worktrees
+from . import brief, data, desktop, ghostty, launch, layout, models, worktrees
 from .data import Session
-from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, Prompt
+from .dialogs import Confirm, DirPrompt, FirstMessage, FolderGone, ModelPick, Prompt
 from .fmt import context_fraction, tilde
 from .launch import Launch, Pending
 from .widgets import SessionList
@@ -199,11 +199,51 @@ class HostingMixin:
         self.start_launch(l)
 
     def new_in(self, project: str, worktree: bool = False) -> None:
-        """Ask for a first message, then start a new session in the project."""
-        def done(text: str | None) -> None:
-            if text is not None:
-                self.begin(launch.new(project, worktree, text), project, hidden=bool(text))
-        self.push_screen(FirstMessage(tilde(project) + (" (new worktree)" if worktree else "")), done)
+        """Ask for a first message and model, then start a new session in the project."""
+        default = self.state.models.get(project, "")
+
+        def done(picked: tuple[str, str] | None) -> None:
+            if picked is not None:
+                text, model = picked
+                self.remember_model(project, model)
+                self.begin(launch.new(project, worktree, text, model=model), project, hidden=bool(text))
+        self.push_screen(FirstMessage(tilde(project) + (" (new worktree)" if worktree else ""),
+                                      model=default, default=default), done)
+
+    def remember_model(self, project: str, model: str) -> None:
+        """The model last picked in a project is what its next new session starts on."""
+        if model == self.state.models.get(project, ""):
+            return
+        if model:
+            self.state.models[project] = model
+        else:
+            self.state.models.pop(project, None)
+        self.state.save()
+
+    def action_switch_model(self) -> None:
+        if not (s := self.selected()):
+            return
+        if not self.host or s.id not in self.hosted:
+            self.notify("Switching models only works for sessions open in csm", severity="warning")
+            return
+        busy = (live := self.live.get(s.id)) is not None and live.status == "busy"
+
+        def picked(model: str | None) -> None:
+            if not model:
+                return
+            if busy:  # typed now, it would wait in its queue behind the current turn anyway; say so instead
+                self.state.when_idle[s.id] = {"do": "send", "text": f"/model {model}"}
+                self.state.save()
+                self.notify(f"“{s.title}” switches to {model} when it's done", timeout=3)
+                self.rebuild()
+                return
+            try:
+                sent = self.host.send(s.id, f"/model {model}")
+            except subprocess.CalledProcessError as e:
+                self.notify(f"tmux: {(e.stderr or '').strip() or e}", severity="error")
+                return
+            self.notify(f"Switched “{s.title}” to {model}" if sent else "That session is no longer running", timeout=3)
+        self.push_screen(ModelPick(s.title, models.label(s.context_model), busy), picked)
 
     def action_new(self, worktree: bool = False) -> None:
         if project := self.current_project():
@@ -255,11 +295,15 @@ class HostingMixin:
 
     def continue_fresh(self, s: Session, text: str) -> None:
         """Offer the brief as the first message of a new session where the old one ran."""
-        def done(message: str | None) -> None:
-            if message is not None:
-                self.begin(launch.new(s.cwd, prompt=message, name=f"{s.title} (continued)"), s.project,
+        default = self.state.models.get(s.project, "")
+
+        def done(picked: tuple[str, str] | None) -> None:
+            if picked is not None:
+                message, model = picked
+                self.remember_model(s.project, model)
+                self.begin(launch.new(s.cwd, prompt=message, name=f"{s.title} (continued)", model=model), s.project,
                            hidden=bool(message))
-        self.push_screen(FirstMessage(tilde(s.cwd), text), done)
+        self.push_screen(FirstMessage(tilde(s.cwd), text, model=default, default=default), done)
 
     def action_fork(self) -> None:
         if s := self.selected():

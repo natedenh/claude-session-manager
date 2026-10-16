@@ -90,11 +90,11 @@ def test_origin_survives_a_cache_hit(paths, write, tmp_path):
 
 
 async def test_dialogs_are_centred_and_wrap(sessions, tmp_path):  # noqa: F811
-    from csm.dialogs import AutoArchiveSettings, Confirm, DirPrompt, FirstMessage, Prompt, WhenIdle
+    from csm.dialogs import AutoArchiveSettings, Confirm, DirPrompt, FirstMessage, ModelPick, Prompt, WhenIdle
     from csm import autoarchive
     long = "a very long session title that goes on " * 3
     dialogs = [FolderGone(long, "/r/web/.claude/worktrees/" + "x" * 80, "fix-login"), Confirm(long), Prompt(long),
-               DirPrompt(long, "~/"), FirstMessage("~/code/" + "y" * 90), WhenIdle(long, None, True),
+               DirPrompt(long, "~/"), FirstMessage("~/code/" + "y" * 90), WhenIdle(long, None, True), ModelPick(long, "opus 5.5", True),
                AutoArchiveSettings(autoarchive.normalize(None))]
     app = CSM(sessions)
     async with app.run_test(size=(100, 40)) as pilot:

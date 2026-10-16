@@ -48,3 +48,17 @@ def rescale(cost: float, model: str | None, to: tuple[str, str]) -> float | None
     """What `cost` spent on `model` would have cost on `to`, at list-price ratios."""
     here = price(model)
     return cost * LIST_PRICE[to] / here if here else None
+
+
+# What a session can be started or switched on: aliases Claude Code resolves through your
+# provider ("" leaves it to Claude Code's own default). opusplan: Opus in plan mode, Sonnet otherwise.
+CHOICES = ("", "opus", "sonnet", "haiku", "opusplan")
+CHOICE_NOTE = {"": "Claude Code's default", "opusplan": "Opus plans, Sonnet writes the code"}
+
+
+def next_choice(current: str) -> str:
+    return CHOICES[(CHOICES.index(current) + 1) % len(CHOICES)] if current in CHOICES else CHOICES[0]
+
+
+def describe(choice: str) -> str:
+    return f"{choice} ({CHOICE_NOTE[choice]})" if choice in CHOICE_NOTE and choice else CHOICE_NOTE.get(choice, choice)

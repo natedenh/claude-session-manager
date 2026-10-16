@@ -646,7 +646,7 @@ class State:
     """
 
     SETS = ("archived", "collapsed", "pinned", "keep")
-    DICTS = ("auto_archive", "tags", "notes", "when_idle")
+    DICTS = ("auto_archive", "tags", "notes", "when_idle", "models")
 
     def __init__(self, path: Path):
         self.path = path
@@ -674,12 +674,15 @@ class State:
         # {session id: {"do": "notify" | "archive" | "retire" | "send", "text": prompt to send}}
         self.when_idle: dict[str, dict] = {k: v for k, v in (d.get("when_idle") or {}).items()
                                            if isinstance(v, dict) and v.get("do") in WHEN_IDLE}
+        # {project: model alias} new sessions there start on
+        self.models: dict[str, str] = {k: v for k, v in (d.get("models") or {}).items() if isinstance(v, str) and v}
         self.base = self._snapshot()
 
     def _snapshot(self) -> dict:
         return {"archived": set(self.archived), "collapsed": set(self.collapsed), "pinned": set(self.pinned),
                 "flat": self.flat, "wave": self.wave, "keep": set(self.keep), "auto_archive": dict(self.auto_archive),
-                "tags": dict(self.tags), "notes": dict(self.notes), "when_idle": dict(self.when_idle)}
+                "tags": dict(self.tags), "notes": dict(self.notes), "when_idle": dict(self.when_idle),
+                "models": dict(self.models)}
 
     def reload(self) -> bool:
         """Pick up changes made to the file elsewhere, keeping unsaved ones made here. True if anything changed."""
@@ -726,7 +729,8 @@ class State:
         _write_json(self.path, {"archived": sorted(self.archived), "collapsed": sorted(self.collapsed),
                                 "pinned": sorted(self.pinned), "flat": self.flat, "wave": self.wave,
                                 "keep": sorted(self.keep), "auto_archive": self.auto_archive,
-                                "tags": self.tags, "notes": self.notes, "when_idle": self.when_idle})
+                                "tags": self.tags, "notes": self.notes, "when_idle": self.when_idle,
+                                "models": self.models})
         self.base = self._snapshot()
         try:
             self.mtime = self.path.stat().st_mtime_ns

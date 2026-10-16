@@ -178,6 +178,14 @@ async def test_everything_draws(nasty, size, monkeypatch, tmp_path):
         await pilot.press("escape")
         await draw(pilot, app)
 
+        # switching a session's model, idle and busy
+        from csm.dialogs import ModelPick
+        for busy in (False, True):
+            app.push_screen(ModelPick(NASTY[0], "[b]opus 5.5", busy))
+            await draw(pilot, app)
+            await pilot.press("escape")
+            await draw(pilot, app)
+
         # toasts, including every tip and every session title
         for tip in tips.TIPS:
             app.notify(f"{tip.text}\n(ctrl+t turns tips off)")

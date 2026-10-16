@@ -99,7 +99,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         scrollbar-background-active: $background; }
     #activity { height: 1; padding: 0 1; }
     #status { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
-    Prompt, Confirm, Help, AutoArchiveSettings, DirPrompt, FirstMessage, WhenIdle, FolderGone { align: center middle; }
+    Prompt, Confirm, Help, AutoArchiveSettings, DirPrompt, FirstMessage, WhenIdle, FolderGone, ModelPick { align: center middle; }
     .dialog > Label { width: 100%; }  /* wrap long titles and paths rather than cutting them off */
     .dialog .row { height: auto; }
     .dialog { width: 72; height: auto; padding: 1 2; border: round $accent; background: $surface; }
@@ -124,6 +124,7 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         Binding("vertical_line", "open_also", "Side by side", show=False),
         Binding("f", "fork", "Fork", show=False),
         Binding("B", "brief", "Continue fresh", show=False),
+        Binding("m", "switch_model", "Model", show=False),
         Binding("r", "rename", "Rename", show=False),
         Binding("number_sign", "tag", "Tags", show=False),
         Binding("i", "note", "Note", show=False),

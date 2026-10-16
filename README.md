@@ -23,7 +23,7 @@ csm is built on macOS; the core runs anywhere tmux does. Optional: a logged-in `
 - **Every session in one list**, grouped by project, newest first, with a preview of the last few turns. Filter as you type, search transcript text, tag, pin, note and archive.
 - **Sessions run beside the list**, like the desktop app's window. Opening another swaps it in; the last one keeps running out of sight. Close the terminal and they keep running; after a reboot, `csm` reopens the ones you had open.
 - **What needs you, first.** A session that finished its turn is marked `◆` with how long it has waited, one asking permission gets a red `?`, and one that's gone quiet mid-task gets `⧗`. `tab` opens whichever has waited longest; `ctrl+]` does it from inside a session.
-- **Start work without stopping.** `n` starts a new session on a first message while you stay in the list; `B` continues a session whose context is nearly full in a fresh one, from a brief of where it stands.
+- **Start work without stopping.** `n` starts a new session on a first message while you stay in the list; `B` continues a session whose context is nearly full in a fresh one, from a brief of where it stands. Pick the model as you start one (each project remembers its pick), or switch a running one with `m`.
 - **Teams of subagents under their session**: what each was asked, on which model, how long it ran, what it cost and what it found, with the running ones always in view.
 - **A summary of the last 48 hours:** what needs you, what was decided, what got done.
 
