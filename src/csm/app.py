@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,11 +19,12 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme as RichTheme
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.geometry import Size
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 from textual.worker import get_current_worker
@@ -264,6 +266,8 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         self.set_interval(5, self.refresh_agents)
         self.set_interval(60, self.refresh_prs)
         self.set_interval(120, self.refresh_summaries)
+        self.size_misses = 0
+        self.set_interval(2, self.check_size)
 
     # ---- loading ---------------------------------------------------------
 
@@ -322,6 +326,31 @@ class CSM(AttentionMixin, HostingMixin, App[Session | None]):
         if state != self.git_state:
             self.git_state = state
             self.rebuild()
+
+    def real_size(self) -> Size | None:
+        """The terminal's size as the kernel has it, the way Textual's driver reads it; None in tests."""
+        if self.is_headless:
+            return None
+        width, height = shutil.get_terminal_size()
+        return Size(width, height) if width and height else None
+
+    def check_size(self) -> None:
+        """Catch a resize Textual missed. In a long-running sidebar it can stop following the pane
+        (seen with tmux 3.7 and Textual 8.2) and keep drawing for the old size: rows past the
+        bottom land on the last line and scroll the pane, leaving trails of old rows. Two misses
+        in a row, so a resize Textual is still applying isn't counted."""
+        if (real := self.real_size()) is None or self.closing():
+            return
+        if real == self.screen.size:
+            self.size_misses = 0
+            return
+        self.size_misses += 1
+        if self.size_misses < 2:
+            return
+        self.size_misses = 0
+        self.post_message(events.Resize(real, real))
+        for screen in self.screen_stack:  # straight to the screens too, in case the app's own resize is stuck
+            screen.post_message(events.Resize(real, real))
 
     def closing(self) -> bool:
         """True once the app is shutting down: its widgets go before timers, workers and queued
